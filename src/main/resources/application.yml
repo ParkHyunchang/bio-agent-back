@@ -1,0 +1,10 @@
+spring:
+  profiles:
+    active: local
+
+server:
+  port: 3211
+
+logging:
+  level:
+    org.springframework.web: INFO
