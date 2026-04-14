@@ -1,0 +1,22 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/parkhyunchang/bio-agent-back:latest}
+    container_name: bio_agent_backend
+    restart: always
+    ports:
+      - "3211:3211"
+    environment:
+      TZ: Asia/Seoul
+      SPRING_PROFILES_ACTIVE: docker
+      # DB 설정 (.env 파일에서 주입)
+      MYSQL_HOST: 172.17.0.1
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      # 앱 설정 (.env 파일에서 추가 주입 가능)
+      SERVER_PORT: 3211
+    volumes:
+      - /volume1/docker/bio-agent-back/logs:/app/logs:Z
+    env_file:
+      - .env
