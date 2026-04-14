@@ -16,6 +16,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       # 앱 설정 (.env 파일에서 추가 주입 가능)
       SERVER_PORT: 3211
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
       - /volume1/docker/bio-agent-back/logs:/app/logs:Z
     env_file:

@@ -8,3 +8,7 @@ server:
 logging:
   level:
     org.springframework.web: INFO
+
+anthropic:
+  api:
+    key: ${ANTHROPIC_API_KEY:}
