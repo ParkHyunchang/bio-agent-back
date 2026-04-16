@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.bioagent.dto.PaperDetail;
 import com.hyunchang.bioagent.dto.PaperSummary;
+import com.hyunchang.bioagent.dto.SearchResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -22,28 +23,64 @@ public class PubMedService {
     private final RestClient restClient = RestClient.create();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public List<PaperSummary> search(String query, int maxResults) {
-        // 1. esearch: PMID 목록 조회
-        URI searchUri = UriComponentsBuilder.fromUriString(BASE_URL + "/esearch.fcgi")
+    private static final int TOO_BROAD_THRESHOLD = 200;
+
+    /** espell API로 PubMed 철자 교정어 반환. 교정 불필요시 null */
+    private String checkSpelling(String query) {
+        URI spellUri = UriComponentsBuilder.fromUriString(BASE_URL + "/espell.fcgi")
                 .queryParam("db", "pubmed")
                 .queryParam("term", query)
-                .queryParam("retmax", maxResults)
+                .queryParam("retmode", "json")
+                .build().toUri();
+        try {
+            String response = restClient.get().uri(spellUri).retrieve().body(String.class);
+            String corrected = objectMapper.readTree(response)
+                    .path("esearchresult").path("correctedquery").asText("");
+            if (!corrected.isBlank() && !corrected.equalsIgnoreCase(query)) {
+                return corrected;
+            }
+        } catch (Exception e) {
+            log.warn("PubMed espell 오류", e);
+        }
+        return null;
+    }
+
+    public SearchResponse search(String query, int page, int size) {
+        String correctedQuery = checkSpelling(query);
+        String searchQuery = correctedQuery != null ? correctedQuery : query;
+
+        int retStart = (page - 1) * size;
+
+        // 1. esearch: 총 건수 확인 및 현재 페이지 PMID 조회
+        URI searchUri = UriComponentsBuilder.fromUriString(BASE_URL + "/esearch.fcgi")
+                .queryParam("db", "pubmed")
+                .queryParam("term", searchQuery)
+                .queryParam("retstart", retStart)
+                .queryParam("retmax", size)
                 .queryParam("retmode", "json")
                 .build().toUri();
 
         List<String> pmids = new ArrayList<>();
+        int totalCount = 0;
         try {
             String searchResponse = restClient.get().uri(searchUri).retrieve().body(String.class);
-            JsonNode root = objectMapper.readTree(searchResponse);
-            for (JsonNode id : root.path("esearchresult").path("idlist")) {
+            JsonNode esearchResult = objectMapper.readTree(searchResponse).path("esearchresult");
+            totalCount = esearchResult.path("count").asInt(0);
+            for (JsonNode id : esearchResult.path("idlist")) {
                 pmids.add(id.asText());
             }
         } catch (Exception e) {
             log.error("PubMed esearch 오류", e);
-            return List.of();
+            return SearchResponse.builder()
+                    .papers(List.of()).total(0).page(page).size(size).tooBroad(false).build();
         }
 
-        if (pmids.isEmpty()) return List.of();
+        if (pmids.isEmpty()) {
+            return SearchResponse.builder()
+                    .papers(List.of()).total(totalCount).page(page).size(size)
+                    .tooBroad(totalCount > TOO_BROAD_THRESHOLD)
+                    .correctedQuery(correctedQuery).build();
+        }
 
         // 2. esummary: 제목/저자/저널 조회
         URI summaryUri = UriComponentsBuilder.fromUriString(BASE_URL + "/esummary.fcgi")
@@ -78,7 +115,14 @@ public class PubMedService {
             log.error("PubMed esummary 오류", e);
         }
 
-        return results;
+        return SearchResponse.builder()
+                .papers(results)
+                .total(totalCount)
+                .page(page)
+                .size(size)
+                .tooBroad(totalCount > TOO_BROAD_THRESHOLD)
+                .correctedQuery(correctedQuery)
+                .build();
     }
 
     public PaperDetail getDetail(String pmid) {

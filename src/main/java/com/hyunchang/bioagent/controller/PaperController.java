@@ -1,8 +1,8 @@
 package com.hyunchang.bioagent.controller;
 
 import com.hyunchang.bioagent.dto.PaperDetail;
-import com.hyunchang.bioagent.dto.PaperSummary;
 import com.hyunchang.bioagent.dto.ReviewRequest;
+import com.hyunchang.bioagent.dto.SearchResponse;
 import com.hyunchang.bioagent.service.ClaudeService;
 import com.hyunchang.bioagent.service.PubMedService;
 import com.hyunchang.bioagent.service.SearchLogService;
@@ -12,7 +12,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -26,15 +25,17 @@ public class PaperController {
     private final SearchLogService searchLogService;
 
     @GetMapping("/search")
-    public List<PaperSummary> search(
+    public SearchResponse search(
             @RequestParam String query,
-            @RequestParam(defaultValue = "10") int maxResults) {
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
         long start = System.currentTimeMillis();
-        List<PaperSummary> results = pubMedService.search(query, maxResults);
+        SearchResponse result = pubMedService.search(query, page, size);
         long duration = System.currentTimeMillis() - start;
-        log.info("[SEARCH] query=\"{}\" → {}건 ({}ms)", query, results.size(), duration);
-        searchLogService.logSearch(query, results.size(), duration);
-        return results;
+        log.info("[SEARCH] query=\"{}\" page={} → {}건/총{}건 tooBroad={} ({}ms)",
+                query, page, result.getPapers().size(), result.getTotal(), result.isTooBroad(), duration);
+        searchLogService.logSearch(query, result.getTotal(), duration);
+        return result;
     }
 
     @GetMapping("/{pmid}")

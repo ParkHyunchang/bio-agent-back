@@ -10,6 +10,7 @@ C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\ent
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\repository\SearchLogRepository.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\service\PubMedService.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto\PaperDetail.java
+C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto\SearchResponse.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\BioAgentApplication.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto\ReviewRequest.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\service\ClaudeService.java
