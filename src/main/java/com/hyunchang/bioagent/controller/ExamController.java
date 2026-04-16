@@ -18,25 +18,11 @@ public class ExamController {
 
     private final OcrService ocrService;
 
-    /** 이미지 OCR 추출 + 저장 (한 번에 여러 파일) */
+    /** 이미지 OCR 추출 + 저장 (한 번에 여러 파일, 병렬 처리) */
     @PostMapping("/upload")
     public ResponseEntity<List<OcrResultDto>> upload(
             @RequestParam("files") List<MultipartFile> files) {
-
-        List<OcrResultDto> results = files.stream().map(file -> {
-            try {
-                return ocrService.extractAndSave(file);
-            } catch (Exception e) {
-                log.error("OCR 처리 실패: {}", file.getOriginalFilename(), e);
-                OcrResultDto err = new OcrResultDto();
-                err.setFileName(file.getOriginalFilename());
-                err.setDocumentType("오류");
-                err.setRawText("처리 중 오류가 발생했습니다: " + e.getMessage());
-                return err;
-            }
-        }).toList();
-
-        return ResponseEntity.ok(results);
+        return ResponseEntity.ok(ocrService.extractAndSaveAll(files));
     }
 
     /** 저장된 기록 전체 목록 */

@@ -13,8 +13,4 @@ spring:
         format_sql: false
     show-sql: false
 
-logging:
-  level:
-    org.springframework.web: INFO
-  file:
-    name: /app/logs/bio-agent.log
+# 로깅 설정은 logback-spring.xml 에서 관리 (콘솔 + 파일 동시 출력)

@@ -18,12 +18,18 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OcrService {
 
+    // ════════════════════════════════════════════════════════════════
+    // ▼ Claude (Anthropic) 설정 (현재 사용 중)
+    // ════════════════════════════════════════════════════════════════
     private static final String ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
     private static final String MODEL = "claude-sonnet-4-6";
 
@@ -35,19 +41,59 @@ public class OcrService {
     private final org.springframework.web.client.RestClient restClient =
             org.springframework.web.client.RestClient.create();
 
+    // 병렬 처리용 스레드 풀
+    // Claude API 레이트 리밋(50 RPM) 여유 있게 유지하기 위해 5개로 제한
+    private final ExecutorService executor = Executors.newFixedThreadPool(5);
+
+    // ── 공개 API ────────────────────────────────────────────────────
+
+    /** 여러 파일을 병렬로 OCR 처리 후 저장 */
+    public List<OcrResultDto> extractAndSaveAll(List<MultipartFile> files) {
+        log.info("OCR 병렬 처리 시작: {}장", files.size());
+
+        List<CompletableFuture<OcrResultDto>> futures = files.stream()
+                .map(file -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        log.info("OCR 처리 중: {}", file.getOriginalFilename());
+                        return extractAndSave(file);
+                    } catch (Exception e) {
+                        log.error("OCR 처리 실패: {}", file.getOriginalFilename(), e);
+                        OcrResultDto err = new OcrResultDto();
+                        err.setFileName(file.getOriginalFilename());
+                        err.setDocumentType("오류");
+                        err.setRawText("처리 중 오류가 발생했습니다: " + e.getMessage());
+                        return err;
+                    }
+                }, executor))
+                .toList();
+
+        List<OcrResultDto> results = futures.stream()
+                .map(CompletableFuture::join)
+                .toList();
+
+        log.info("OCR 완료: 전체 {}장 / 성공 {}장 / 오류 {}장",
+                results.size(),
+                results.stream().filter(r -> !"오류".equals(r.getDocumentType())).count(),
+                results.stream().filter(r -> "오류".equals(r.getDocumentType())).count());
+
+        return results;
+    }
+
+    /** 단일 파일 OCR 처리 후 저장 */
     public OcrResultDto extractAndSave(MultipartFile file) throws Exception {
         String base64Data = Base64.getEncoder().encodeToString(file.getBytes());
-        String mediaType = resolveMediaType(file.getContentType());
+        String mediaType  = resolveMediaType(file.getContentType());
 
+        // ── Claude 요청 형식 ──────────────────────────────────────────
         Map<String, Object> imageSource = Map.of(
                 "type", "base64",
                 "media_type", mediaType,
                 "data", base64Data
         );
         Map<String, Object> imageContent = Map.of("type", "image", "source", imageSource);
-        Map<String, Object> textContent = Map.of("type", "text", "text", buildPrompt());
-        Map<String, Object> message = Map.of("role", "user", "content", List.of(imageContent, textContent));
-        Map<String, Object> requestBody = Map.of(
+        Map<String, Object> textContent  = Map.of("type", "text",  "text",   buildPrompt());
+        Map<String, Object> message      = Map.of("role", "user",  "content", List.of(imageContent, textContent));
+        Map<String, Object> requestBody  = Map.of(
                 "model", MODEL,
                 "max_tokens", 8096,
                 "messages", List.of(message)
@@ -62,7 +108,7 @@ public class OcrService {
                 .retrieve()
                 .body(String.class);
 
-        JsonNode root = objectMapper.readTree(response);
+        JsonNode root  = objectMapper.readTree(response);
         String content = root.path("content").get(0).path("text").asText();
         String jsonText = extractJson(content);
 
@@ -72,7 +118,7 @@ public class OcrService {
 
         try {
             JsonNode parsed = objectMapper.readTree(jsonText);
-            rawText = parsed.path("rawText").asText("");
+            rawText      = parsed.path("rawText").asText("");
             documentType = parsed.path("documentType").asText("기타");
 
             JsonNode itemsNode = parsed.path("items");
@@ -88,9 +134,8 @@ public class OcrService {
                 }
             }
         } catch (Exception e) {
-            // JSON 파싱 실패 시 content 자체를 rawText로 저장하고 items는 빈 배열로 처리
             log.warn("JSON 파싱 실패, rawText fallback 처리: {}", e.getMessage());
-            rawText = content.length() > 1000 ? content.substring(0, 1000) + "..." : content;
+            rawText      = content.length() > 1000 ? content.substring(0, 1000) + "..." : content;
             documentType = "파싱오류";
         }
 
@@ -122,7 +167,7 @@ public class OcrService {
         examRecordRepository.deleteById(id);
     }
 
-    // ── 내부 헬퍼 ──────────────────────────────────────────
+    // ── 내부 헬퍼 ──────────────────────────────────────────────────
 
     private String buildPrompt() {
         return """
@@ -151,10 +196,9 @@ public class OcrService {
                 """;
     }
 
-    /** Claude 응답에서 JSON 객체 부분만 추출 (코드블록 유무, 닫는 ``` 누락 등 모두 처리) */
     private String extractJson(String text) {
         int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
+        int end   = text.lastIndexOf('}');
         if (start >= 0 && end > start) {
             return text.substring(start, end + 1);
         }
@@ -164,10 +208,10 @@ public class OcrService {
     private String resolveMediaType(String contentType) {
         if (contentType == null) return "image/jpeg";
         return switch (contentType.toLowerCase()) {
-            case "image/png" -> "image/png";
-            case "image/gif" -> "image/gif";
+            case "image/png"  -> "image/png";
+            case "image/gif"  -> "image/gif";
             case "image/webp" -> "image/webp";
-            default -> "image/jpeg";
+            default           -> "image/jpeg";
         };
     }
 

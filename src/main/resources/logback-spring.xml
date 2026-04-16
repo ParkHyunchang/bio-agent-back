@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <property name="CONSOLE_PATTERN" value="%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"/>
+    <property name="FILE_PATTERN"    value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"/>
+
+    <!-- ══════════════════════════════════════════════
+         콘솔 출력 (항상 활성 — VSCode 터미널 포함)
+         ══════════════════════════════════════════════ -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ══════════════════════════════════════════════
+         local 프로파일: 로컬 파일 출력
+         경로: {프로젝트루트}/logs/bio-agent.log
+         ══════════════════════════════════════════════ -->
+    <springProfile name="local">
+        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>logs/bio-agent.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+                <fileNamePattern>logs/bio-agent.log.%d{yyyy-MM-dd}.gz</fileNamePattern>
+                <maxHistory>7</maxHistory>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${FILE_PATTERN}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </root>
+
+        <logger name="com.hyunchang.bioagent" level="INFO"/>
+        <logger name="org.springframework.web"  level="INFO"/>
+        <logger name="org.hibernate"            level="WARN"/>
+    </springProfile>
+
+    <!-- ══════════════════════════════════════════════
+         docker 프로파일: NAS 파일 출력
+         경로: /app/logs/bio-agent.log (컨테이너 내부)
+         ══════════════════════════════════════════════ -->
+    <springProfile name="docker">
+        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>/app/logs/bio-agent.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+                <fileNamePattern>/app/logs/bio-agent.log.%d{yyyy-MM-dd}.gz</fileNamePattern>
+                <maxHistory>30</maxHistory>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${FILE_PATTERN}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </root>
+
+        <logger name="com.hyunchang.bioagent" level="INFO"/>
+        <logger name="org.springframework.web"  level="INFO"/>
+        <logger name="org.hibernate"            level="WARN"/>
+    </springProfile>
+
+</configuration>
