@@ -16,3 +16,7 @@ spring:
 anthropic:
   api:
     key: ${ANTHROPIC_API_KEY:}
+
+ml:
+  service:
+    url: http://localhost:3212

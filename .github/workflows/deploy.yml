@@ -68,8 +68,12 @@ jobs:
               echo "BACKEND_IMAGE=${{ env.IMAGE_NAME }}:latest" > .env
             fi
 
+            # 모델 저장 디렉토리 보장
+            mkdir -p /volume1/docker/bio-agent-ml/model
+
             # 최신 이미지 Pull 및 컨테이너 재배포 (docker-compose v1)
-            /usr/local/bin/docker-compose pull backend
+            /usr/local/bin/docker-compose pull backend bio-agent-ml
+            /usr/local/bin/docker-compose up -d --no-deps bio-agent-ml
             /usr/local/bin/docker-compose up -d --no-deps backend
 
             # 미사용 이미지 정리

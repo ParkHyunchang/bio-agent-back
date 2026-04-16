@@ -13,4 +13,8 @@ spring:
         format_sql: false
     show-sql: false
 
+ml:
+  service:
+    url: http://bio-agent-ml:3212
+
 # 로깅 설정은 logback-spring.xml 에서 관리 (콘솔 + 파일 동시 출력)
