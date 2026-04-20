@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 @Slf4j
 @Service
@@ -89,18 +90,19 @@ public class AgentService {
      * @param contentType 이미지 MIME 타입 (null 가능)
      */
     public String chat(String sessionId, String userMessage, byte[] imageBytes, String filename, String contentType) {
+        return chat(sessionId, userMessage, imageBytes, filename, contentType, null);
+    }
+
+    public String chat(String sessionId, String userMessage, byte[] imageBytes, String filename, String contentType,
+                       Consumer<String> progressCallback) {
         if (apiKey == null || apiKey.isBlank()) {
             return "Anthropic API 키가 설정되지 않았습니다.";
         }
 
-        // 이전 대화 히스토리 로드 (Claude API용 - base64 제거)
         List<Map<String, Object>> messages = conversationStore.loadForClaude(sessionId);
-        int historySize = messages.size();
-        log.info("대화 히스토리 로드: sessionId={}, 이전 메시지={}개", sessionId, historySize);
+        log.info("대화 히스토리 로드: sessionId={}, 이전 메시지={}개", sessionId, messages.size());
 
-        // 새 사용자 메시지 추가
         messages.add(buildUserMessage(userMessage, imageBytes, contentType));
-
         List<Map<String, Object>> tools = buildTools(imageBytes != null);
 
         for (int i = 0; i < MAX_ITERATIONS; i++) {
@@ -110,7 +112,6 @@ public class AgentService {
 
             if ("end_turn".equals(stopReason)) {
                 String text = extractText(response);
-                // 최종 assistant 응답도 히스토리에 포함해 저장
                 messages.add(Map.of("role", "assistant", "content",
                         List.of(Map.of("type", "text", "text", text))));
                 conversationStore.save(sessionId, messages);
@@ -119,7 +120,7 @@ public class AgentService {
 
             if ("tool_use".equals(stopReason)) {
                 messages.add(Map.of("role", "assistant", "content", jsonNodeToObject(response.path("content"))));
-                List<Map<String, Object>> toolResults = executeTools(response.path("content"), imageBytes, filename);
+                List<Map<String, Object>> toolResults = executeTools(response.path("content"), imageBytes, filename, progressCallback);
                 messages.add(Map.of("role", "user", "content", toolResults));
             } else {
                 break;
@@ -234,7 +235,16 @@ public class AgentService {
 
     // ── 도구 실행 ─────────────────────────────────────────────────
 
-    private List<Map<String, Object>> executeTools(JsonNode contentArray, byte[] imageBytes, String filename) {
+    private static final Map<String, String> TOOL_LABELS = Map.of(
+            "analyze_gel_image",       "젤 이미지 분석 중...",
+            "get_model_status",        "ML 모델 상태 확인 중...",
+            "interpret_result",        "분석 결과 해석 중...",
+            "search_past_experiments", "과거 실험 데이터 검색 중...",
+            "search_papers",           "관련 논문 검색 중..."
+    );
+
+    private List<Map<String, Object>> executeTools(JsonNode contentArray, byte[] imageBytes, String filename,
+                                                    Consumer<String> progressCallback) {
         List<Map<String, Object>> results = new ArrayList<>();
 
         for (JsonNode block : contentArray) {
@@ -242,6 +252,11 @@ public class AgentService {
 
             String toolName = block.path("name").asText();
             String toolUseId = block.path("id").asText();
+
+            if (progressCallback != null) {
+                String label = TOOL_LABELS.getOrDefault(toolName, toolName + " 실행 중...");
+                progressCallback.accept(label);
+            }
 
             String resultContent;
             try {

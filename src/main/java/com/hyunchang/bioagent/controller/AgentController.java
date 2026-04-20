@@ -5,13 +5,18 @@ import com.hyunchang.bioagent.dto.SessionSummaryDto;
 import com.hyunchang.bioagent.service.AgentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @RestController
@@ -20,6 +25,60 @@ import java.util.UUID;
 public class AgentController {
 
     private final AgentService agentService;
+    private final ExecutorService executor = Executors.newCachedThreadPool();
+
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chatStream(
+            @RequestParam("message") String message,
+            @RequestParam(value = "sessionId", required = false) String sessionId,
+            @RequestParam(value = "file", required = false) MultipartFile file) {
+
+        String resolvedSessionId = (sessionId == null || sessionId.isBlank())
+                ? UUID.randomUUID().toString() : sessionId;
+
+        SseEmitter emitter = new SseEmitter(300_000L);
+
+        executor.submit(() -> {
+            try {
+                byte[] imageBytes = (file != null && !file.isEmpty()) ? file.getBytes() : null;
+                String filename   = (file != null) ? file.getOriginalFilename() : null;
+                String ct         = (file != null) ? file.getContentType() : null;
+
+                String response = agentService.chat(
+                        resolvedSessionId, message, imageBytes, filename, ct,
+                        label -> {
+                            try {
+                                emitter.send(SseEmitter.event().name("progress").data(label));
+                            } catch (IOException ignored) {}
+                        }
+                );
+
+                emitter.send(SseEmitter.event().name("done")
+                        .data("{\"sessionId\":\"" + resolvedSessionId + "\",\"message\":"
+                                + escapeJson(response) + "}"));
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("에이전트 스트리밍 실패", e);
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
+                } catch (IOException ignored) {}
+                emitter.completeWithError(e);
+            }
+        });
+
+        return emitter;
+    }
+
+    private String escapeJson(String text) {
+        if (text == null) return "\"\"";
+        return "\"" + text
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
+                + "\"";
+    }
 
     @PostMapping("/chat")
     public ResponseEntity<AgentResponse> chat(
