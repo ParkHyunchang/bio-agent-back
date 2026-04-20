@@ -20,13 +20,9 @@ public class AgentSession {
     @Column(name = "session_id", nullable = false, unique = true, length = 36)
     private String sessionId;
 
-    /** Claude API로 전송하는 전체 메시지 히스토리 (JSON) */
-    @Column(name = "claude_messages", columnDefinition = "MEDIUMTEXT")
-    private String claudeMessages;
-
-    /** 프론트엔드 표시용 대화 메시지 (JSON) */
-    @Column(name = "display_messages", columnDefinition = "MEDIUMTEXT")
-    private String displayMessages;
+    /** 사이드바 표시용 미리보기 제목 */
+    @Column(length = 200)
+    private String preview;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
