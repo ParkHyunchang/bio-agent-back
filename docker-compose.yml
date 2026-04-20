@@ -30,5 +30,9 @@ services:
     restart: always
     ports:
       - "3212:3212"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      LOG_TO_FILE: "true"
     volumes:
       - /volume1/docker/bio-agent-ml/model:/app/model:Z
+      - /volume1/docker/bio-agent-ml/logs:/app/logs:Z
