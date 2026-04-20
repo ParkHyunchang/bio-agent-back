@@ -28,39 +28,43 @@ public class AgentService {
     private static final int MAX_ITERATIONS = 5;
 
     private static final String SYSTEM_PROMPT = """
-            당신은 PCR 젤 전기영동 분석 전문 AI 에이전트입니다.
+            당신은 mecA PCR 젤 전기영동 분석 전문 AI 에이전트입니다.
             사용자가 PCR 젤 이미지를 업로드하면 ML 모델과 해석 도구를 사용하여
-            qPCR Ct값을 예측하고 결과의 의미를 전문적으로 설명합니다.
+            레인별 qPCR Ct값을 예측하고 결과의 의미를 전문적으로 설명합니다.
 
-            ## 도구 사용 순서 (이미지가 있을 때 반드시 이 순서 준수)
-            1. analyze_gel_image 호출 → Ct값, 모델 성능, 밴드 특징 획득
-            2. interpret_result 호출 → 획득한 값을 파라미터로 전달하여 구조화된 해석 획득
-            3. 두 도구의 결과를 종합하여 자연어로 답변
+            ## mecA 멀티레인 젤 구조
+            - 젤은 10개 레인으로 구성됩니다: M(래더), 10^8, 10^7, 10^6, 10^5, 10^4, 10^3, 10^2, 10^1, NTC
+            - mecA 프라이머(Tm=59.72°C)의 앰플리콘은 약 280~300bp
+            - 각 레인은 10배 희석 계열 (10^8이 최고 농도)
+
+            ## 이미지 분석 시 도구 순서 (반드시 이 순서 준수)
+            1. analyze_gel_image 호출 → 10개 레인별 Ct 예측값 및 밴드 특징 획득
+            2. interpret_result 호출 → 대표 레인(10^5 권장)의 값으로 구조화된 해석 획득
+            3. search_past_experiments 호출 → 과거 유사 실험 비교 (totalRecords > 0일 때)
+            4. 세 도구 결과를 종합하여 자연어 답변
+
+            ## analyze_gel_image 결과 해석 규칙
+            - lanes 배열에서 label="M" 및 label="NTC"의 predicted_ct는 무의미하므로 해석에서 제외
+            - NTC 레인의 is_negative=false이면 "오염 의심" 경고를 반드시 언급
+            - is_saturated=true인 레인은 "포화 (Ct 과소평가 가능)"으로 표기
+            - 저농도 레인(10^1, 10^2, 10^3)에서 is_negative=false이면 반드시 강조 (검출 한계 이하 검출)
+            - LOD(검출 한계) = 밴드 검출된 레인(is_negative=false) 중 최저 농도 레인의 레이블로 정의
 
             ## 답변 형식 (이미지 분석 시)
-            - **분류**: interpret_result의 classification 값 명시
-            - **Ct값 의미**: ctRangeDescription 설명
-            - **밴드 품질**: bandQuality 값과 이미지 상태 설명
-            - **모델 신뢰도**: modelReliability 값과 그 의미 설명
-            - **권장 사항**: recommendation 내용, retestRecommended가 true면 재검 강조
-
-            ## 이미지 분석 시 도구 순서
-            1. analyze_gel_image → Ct값, 모델 성능, 밴드 특징 획득
-            2. interpret_result  → 구조화된 해석 획득
-            3. search_past_experiments → 과거 유사 실험과 비교 (totalRecords > 0일 때)
-            4. 세 도구 결과를 종합하여 자연어 답변
+            - **레인별 요약 표**: 레인 | 예측 Ct | 상태 (검출/미검출/포화/NTC)
+            - **검출 한계 (LOD)**: 몇 배 희석까지 검출되었는지
+            - **저농도 구간 분석** (10^1~10^3): 각 레인의 검출 여부와 Ct값 상세 설명
+            - **QC 판정**: NTC 음성 여부, 포화 레인 유무
+            - **권장 사항**: retestRecommended가 true면 재검 강조
 
             ## search_past_experiments 결과 활용
             - similarCount가 0이면 "유사 실험 없음"으로 처리
             - inTypicalRange가 true/false에 따라 정상/이상 여부 언급
-            - 과거 실험 통계(평균·범위)와 현재 값을 비교하여 맥락 제공
 
             ## search_papers 사용 시점
             - 사용자가 논문, 관련 연구, 과학적 근거를 요청할 때
-            - 분석 결과에 대한 과학적 맥락이 필요할 때 (예: 특정 Ct 임계값의 근거)
-            - 검색어는 영어로 작성하고 구체적으로 입력 (예: "qPCR Ct value 35 positive threshold clinical")
-            - 검색 결과의 논문 제목·저자·저널을 인용하여 답변에 신뢰성 부여
-            - ⚠️ 한 응답 내에서 search_papers는 반드시 1회만 호출하세요. 결과가 없어도 재시도하지 마세요.
+            - 검색어는 영어로 작성 (예: "qPCR Ct value threshold positive detection mecA MRSA")
+            - ⚠️ 한 응답 내에서 search_papers는 반드시 1회만 호출하세요.
 
             ## 일반 질문 시
             - 도구 없이 PCR/qPCR 전문 지식으로 답변
@@ -172,8 +176,10 @@ public class AgentService {
         if (hasImage) {
             tools.add(Map.of(
                     "name", "analyze_gel_image",
-                    "description", "업로드된 PCR 젤 이미지를 ML 모델로 분석하여 Ct값을 예측합니다. "
-                            + "밴드 강도, 면적, 너비 등 특징을 추출하고 예측 Ct값을 반환합니다.",
+                    "description", "업로드된 mecA PCR 젤 이미지를 ML 모델로 레인별 분석합니다. "
+                            + "M, 10^8~10^1, NTC 총 10개 레인에서 각각 밴드 특징을 추출하고 "
+                            + "레인별 예측 Ct값 배열을 반환합니다. "
+                            + "저농도 레인(10^1~10^3)의 검출 여부를 집중 분석합니다.",
                     "input_schema", Map.of("type", "object", "properties", Map.of())
             ));
         }
@@ -239,7 +245,7 @@ public class AgentService {
             "analyze_gel_image",       "젤 이미지 분석 중...",
             "get_model_status",        "ML 모델 상태 확인 중...",
             "interpret_result",        "분석 결과 해석 중...",
-            "search_past_experiments", "과거 실험 데이터 검색 중...",
+            "search_past_experiments", "학습 데이터 검색 중...",
             "search_papers",           "관련 논문 검색 중..."
     );
 
@@ -286,7 +292,10 @@ public class AgentService {
 
     private String runAnalyzeGelImage(byte[] imageBytes, String filename) throws Exception {
         if (imageBytes == null) return "{\"error\": \"이미지가 없습니다.\"}";
-        GelPredictResult result = gelService.predictFromBytes(imageBytes, filename != null ? filename : "image.png");
+        var lanes = gelService.predictMultiLaneFromBytes(imageBytes, filename != null ? filename : "image.png");
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("lanes", lanes);
+        result.put("lane_count", lanes.size());
         return objectMapper.writeValueAsString(result);
     }
 
@@ -336,7 +345,7 @@ public class AgentService {
                 .inTypicalRange(inTypicalRange)
                 .build();
 
-        log.info("과거 실험 검색: predictedCt={}, range=±{}, 전체={}, 유사={}",
+        log.info("학습 데이터 검색: predictedCt={}, range=±{}, 전체={}, 유사={}",
                 predictedCt, range, all.size(), similar.size());
         return objectMapper.writeValueAsString(result);
     }

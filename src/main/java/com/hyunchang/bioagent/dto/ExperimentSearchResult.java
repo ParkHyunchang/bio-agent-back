@@ -24,7 +24,7 @@ public class ExperimentSearchResult {
     /** 유사 실험 통계 (similarCount > 0일 때만) */
     private Statistics similarStats;
 
-    /** 현재 예측값이 과거 실험의 일반적 범위(평균±2σ) 내에 있는지 */
+    /** 현재 예측값이 학습 데이터의 일반적 범위(평균±2σ) 내에 있는지 */
     private boolean inTypicalRange;
 
     @Data
