@@ -90,6 +90,38 @@ public class ConversationStore {
         return deriveDisplayMessages(load(sessionId));
     }
 
+    // ── Claude API용 로드 (base64 이미지 제거) ───────────────────
+
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> loadForClaude(String sessionId) {
+        List<Map<String, Object>> raw = load(sessionId);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> msg : raw) {
+            Object content = msg.get("content");
+            if (!(content instanceof List)) { result.add(msg); continue; }
+            List<Object> blocks = (List<Object>) content;
+            List<Object> clean = new ArrayList<>();
+            boolean hadImage = false;
+            for (Object block : blocks) {
+                if (!(block instanceof Map)) { clean.add(block); continue; }
+                Map<String, Object> b = (Map<String, Object>) block;
+                if ("image".equals(b.get("type"))) {
+                    hadImage = true;
+                } else {
+                    clean.add(b);
+                }
+            }
+            if (hadImage) {
+                clean.add(0, Map.of("type", "text", "text", "[첨부 이미지]"));
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("role", msg.get("role"));
+            m.put("content", clean);
+            result.add(m);
+        }
+        return result;
+    }
+
     // ── 세션 목록 (사이드바용) ────────────────────────────────────
 
     public List<SessionSummaryDto> listSessions() {

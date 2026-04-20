@@ -93,8 +93,8 @@ public class AgentService {
             return "Anthropic API 키가 설정되지 않았습니다.";
         }
 
-        // 이전 대화 히스토리 로드
-        List<Map<String, Object>> messages = conversationStore.load(sessionId);
+        // 이전 대화 히스토리 로드 (Claude API용 - base64 제거)
+        List<Map<String, Object>> messages = conversationStore.loadForClaude(sessionId);
         int historySize = messages.size();
         log.info("대화 히스토리 로드: sessionId={}, 이전 메시지={}개", sessionId, historySize);
 
@@ -113,7 +113,7 @@ public class AgentService {
                 // 최종 assistant 응답도 히스토리에 포함해 저장
                 messages.add(Map.of("role", "assistant", "content",
                         List.of(Map.of("type", "text", "text", text))));
-                conversationStore.save(sessionId, sanitizeForHistory(messages, filename));
+                conversationStore.save(sessionId, messages);
                 return text;
             }
 
@@ -412,40 +412,6 @@ public class AgentService {
     }
 
     // ── 헬퍼 ──────────────────────────────────────────────────────
-
-    /**
-     * 히스토리 저장 전 base64 이미지 블록을 텍스트 참조로 교체합니다.
-     * 이미지를 재전송하지 않아도 Claude가 이전 분석 맥락을 이해할 수 있습니다.
-     */
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> sanitizeForHistory(List<Map<String, Object>> messages, String filename) {
-        List<Map<String, Object>> sanitized = new ArrayList<>();
-        for (Map<String, Object> message : messages) {
-            Object content = message.get("content");
-            if (!(content instanceof List)) {
-                sanitized.add(message);
-                continue;
-            }
-            List<Object> blocks = (List<Object>) content;
-            List<Object> cleanBlocks = new ArrayList<>();
-            boolean hadImage = false;
-            for (Object block : blocks) {
-                if (!(block instanceof Map)) { cleanBlocks.add(block); continue; }
-                Map<String, Object> b = (Map<String, Object>) block;
-                if ("image".equals(b.get("type"))) {
-                    hadImage = true;
-                } else {
-                    cleanBlocks.add(b);
-                }
-            }
-            if (hadImage) {
-                String label = filename != null ? filename : "이미지";
-                cleanBlocks.add(0, Map.of("type", "text", "text", "[첨부 이미지: " + label + "]"));
-            }
-            sanitized.add(Map.of("role", message.get("role"), "content", cleanBlocks));
-        }
-        return sanitized;
-    }
 
     private String extractText(JsonNode response) {
         for (JsonNode block : response.path("content")) {
