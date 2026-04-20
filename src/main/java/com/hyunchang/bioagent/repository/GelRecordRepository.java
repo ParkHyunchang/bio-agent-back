@@ -11,6 +11,10 @@ public interface GelRecordRepository extends JpaRepository<GelRecord, Long> {
 
     List<GelRecord> findAllByOrderByCreatedAtDesc();
 
+    boolean existsByFileHash(String fileHash);
+
+    boolean existsByFileName(String fileName);
+
     @Query("SELECT r FROM GelRecord r WHERE r.ctValue BETWEEN :lower AND :upper ORDER BY ABS(r.ctValue - :target)")
     List<GelRecord> findSimilarByCt(@Param("target") double target,
                                     @Param("lower") double lower,

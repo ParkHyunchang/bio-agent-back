@@ -9,7 +9,7 @@ import java.util.List;
 @Builder
 public class ExperimentSearchResult {
 
-    /** 전체 훈련 데이터 수 */
+    /** 전체 학습 데이터 수 */
     private int totalRecords;
 
     /** 유사 범위(±range Ct) 내 실험 수 */

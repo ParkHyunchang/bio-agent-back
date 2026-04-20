@@ -10,7 +10,7 @@ public class GelPredictResult {
     private Double predictedCt;
     /** 현재 모델의 교차검증 R² */
     private Double modelR2;
-    /** 현재 모델의 훈련 RMSE */
+    /** 현재 모델의 학습 RMSE */
     private Double modelRmse;
     /** 이미지에서 추출된 특징값 (참고용) */
     private Map<String, Object> features;

@@ -20,6 +20,10 @@ public class GelRecord {
     @Column(name = "file_name", nullable = false, length = 500)
     private String fileName;
 
+    /** 파일 내용의 SHA-256 해시 (중복 등록 방지) */
+    @Column(name = "file_hash", length = 64, unique = true)
+    private String fileHash;
+
     /** 외부 기관에서 측정한 실제 qPCR Ct값 */
     @Column(name = "ct_value", nullable = false)
     private Double ctValue;

@@ -4,7 +4,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 훈련 데이터 레코드 응답 DTO */
+/** 학습 데이터 레코드 응답 DTO */
 @Data
 public class GelRecordDto {
     private Long id;

@@ -181,7 +181,7 @@ public class AgentService {
         tools.add(Map.of(
                 "name", "get_model_status",
                 "description", "현재 학습된 ML 모델의 상태를 조회합니다. "
-                        + "훈련 샘플 수, R², RMSE 등 모델 성능 지표를 반환합니다.",
+                        + "학습 샘플 수, R², RMSE 등 모델 성능 지표를 반환합니다.",
                 "input_schema", Map.of("type", "object", "properties", Map.of())
         ));
 
@@ -204,7 +204,7 @@ public class AgentService {
 
         tools.add(Map.of(
                 "name", "search_past_experiments",
-                "description", "과거 훈련 데이터에서 현재 예측 Ct값과 유사한 실험을 검색합니다. " +
+                "description", "과거 학습 데이터에서 현재 예측 Ct값과 유사한 실험을 검색합니다. " +
                         "유사 실험 목록, 통계(평균·범위), 현재 값이 과거 데이터의 일반 범위 내에 있는지 반환합니다.",
                 "input_schema", Map.of(
                         "type", "object",

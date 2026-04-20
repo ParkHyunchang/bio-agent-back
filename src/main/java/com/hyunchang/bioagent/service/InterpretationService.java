@@ -97,9 +97,9 @@ public class InterpretationService {
             items.add("경계값 범위입니다. qPCR 재검사를 권장합니다.");
         }
         if (r2 < 0.5) {
-            items.add("모델 신뢰도가 매우 낮습니다. 훈련 데이터를 추가하여 모델을 재학습하세요.");
+            items.add("모델 신뢰도가 매우 낮습니다. 학습 데이터를 추가하여 모델을 재학습하세요.");
         } else if (r2 < 0.7) {
-            items.add("모델 신뢰도가 낮습니다. 추가 훈련 데이터 등록을 권장합니다.");
+            items.add("모델 신뢰도가 낮습니다. 추가 학습 데이터 등록을 권장합니다.");
         }
         if (rmse > 3.0) {
             items.add(String.format("예측 오차(RMSE ±%.2f Ct)가 큽니다. 결과 해석에 주의하세요.", rmse));

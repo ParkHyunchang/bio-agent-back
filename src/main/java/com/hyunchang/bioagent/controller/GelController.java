@@ -5,6 +5,7 @@ import com.hyunchang.bioagent.dto.GelRecordDto;
 import com.hyunchang.bioagent.service.GelService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -20,26 +21,32 @@ public class GelController {
 
     private final GelService gelService;
 
-    /** 훈련 데이터 등록: PCR 젤 이미지 + 실측 Ct값 */
+    /** 학습 데이터 등록: PCR 젤 이미지 + 실측 Ct값 */
     @PostMapping("/upload")
-    public ResponseEntity<GelRecordDto> upload(
+    public ResponseEntity<?> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam("ctValue") Double ctValue) {
         try {
             return ResponseEntity.ok(gelService.uploadTrainingData(file, ctValue));
+        } catch (IllegalArgumentException e) {
+            if ("DUPLICATE".equals(e.getMessage())) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(Map.of("duplicate", true));
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
-            log.error("훈련 데이터 업로드 실패: {}", e.getMessage(), e);
+            log.error("학습 데이터 업로드 실패: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }
 
-    /** 훈련 데이터 목록 조회 */
+    /** 학습 데이터 목록 조회 */
     @GetMapping("/records")
     public ResponseEntity<List<GelRecordDto>> getRecords() {
         return ResponseEntity.ok(gelService.findAll());
     }
 
-    /** 훈련 데이터 삭제 */
+    /** 학습 데이터 삭제 */
     @DeleteMapping("/records/{id}")
     public ResponseEntity<Void> deleteRecord(@PathVariable Long id) {
         gelService.deleteById(id);

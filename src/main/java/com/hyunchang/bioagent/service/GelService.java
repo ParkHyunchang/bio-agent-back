@@ -18,6 +18,7 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,7 @@ public class GelService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestClient restClient = RestClient.create();
 
-    // ── 훈련 데이터 업로드 ─────────────────────────────────────────
+    // ── 학습 데이터 업로드 ─────────────────────────────────────────
 
     /**
      * PCR 젤 이미지와 실측 Ct값을 받아 특징을 추출하고 DB에 저장합니다.
@@ -44,13 +45,21 @@ public class GelService {
      * @return 저장된 레코드 DTO
      */
     public GelRecordDto uploadTrainingData(MultipartFile file, Double ctValue) throws Exception {
-        log.info("훈련 데이터 업로드: {} (Ct={})", file.getOriginalFilename(), ctValue);
+        log.info("학습 데이터 업로드: {} (Ct={})", file.getOriginalFilename(), ctValue);
+
+        byte[] fileBytes = file.getBytes();
+        String fileHash = computeSha256(fileBytes);
+        if (gelRecordRepository.existsByFileHash(fileHash)
+                || gelRecordRepository.existsByFileName(file.getOriginalFilename())) {
+            throw new IllegalArgumentException("DUPLICATE");
+        }
 
         // Python /extract 호출
         JsonNode features = callExtract(file);
 
         GelRecord record = GelRecord.builder()
                 .fileName(file.getOriginalFilename())
+                .fileHash(fileHash)
                 .ctValue(ctValue)
                 .bandIntensity(features.path("band_intensity").asDouble(0))
                 .bandArea(features.path("band_area").asDouble(0))
@@ -78,7 +87,7 @@ public class GelService {
     // ── 모델 학습 ─────────────────────────────────────────────────
 
     /**
-     * DB에 저장된 전체 훈련 데이터를 Python 서비스로 전송하여 모델을 학습시킵니다.
+     * DB에 저장된 전체 학습 데이터를 Python 서비스로 전송하여 모델을 학습시킵니다.
      *
      * @return 학습 메트릭 (R², RMSE, 샘플 수 등)
      */
@@ -86,7 +95,7 @@ public class GelService {
         List<GelRecord> records = gelRecordRepository.findAll();
         if (records.size() < 3) {
             throw new IllegalStateException(
-                    "최소 3개 이상의 훈련 데이터가 필요합니다. 현재: " + records.size() + "개");
+                    "최소 3개 이상의 학습 데이터가 필요합니다. 현재: " + records.size() + "개");
         }
 
         List<Map<String, Object>> features = records.stream()
@@ -208,6 +217,18 @@ public class GelService {
     }
 
     // ── 내부 헬퍼 ─────────────────────────────────────────────────
+
+    private String computeSha256(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(bytes);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("해시 계산 실패", e);
+        }
+    }
 
     private JsonNode callExtract(MultipartFile file) throws Exception {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
