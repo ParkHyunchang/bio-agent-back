@@ -127,9 +127,22 @@ public class ConversationStore {
 
             if (text == null) continue;
 
-            boolean hadImage = blocks.stream().anyMatch(b -> "image".equals(b.get("type")));
-            if (!hadImage && text.contains("[첨부 이미지:")) {
-                hadImage = true;
+            String imageUrl = null;
+            for (Map<String, Object> b : blocks) {
+                if ("image".equals(b.get("type"))) {
+                    Object src = b.get("source");
+                    if (src instanceof Map) {
+                        Map<?, ?> source = (Map<?, ?>) src;
+                        String mediaType = (String) source.get("media_type");
+                        String data = (String) source.get("data");
+                        if (data != null && mediaType != null) {
+                            imageUrl = "data:" + mediaType + ";base64," + data;
+                        }
+                    }
+                    break;
+                }
+            }
+            if (imageUrl == null && text.contains("[첨부 이미지:")) {
                 text = text.replaceFirst("\\[첨부 이미지:.*?]\\s*", "").trim();
             }
 
@@ -137,7 +150,10 @@ public class ConversationStore {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("role", displayRole);
             item.put("text", text);
-            if (hadImage) item.put("hadImage", true);
+            if (imageUrl != null) {
+                item.put("hadImage", true);
+                item.put("imageUrl", imageUrl);
+            }
             display.add(item);
         }
 
