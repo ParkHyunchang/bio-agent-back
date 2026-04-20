@@ -25,6 +25,20 @@ public class PubMedService {
 
     private static final int TOO_BROAD_THRESHOLD = 200;
 
+    /** 429 Rate Limit 시 1초 대기 후 1회 재시도하는 GET 헬퍼 */
+    private String fetchWithRetry(URI uri) throws Exception {
+        try {
+            return restClient.get().uri(uri).retrieve().body(String.class);
+        } catch (Exception e) {
+            if (e.getMessage() != null && e.getMessage().contains("429")) {
+                log.warn("PubMed rate limit 감지, 1.1초 대기 후 재시도");
+                Thread.sleep(1100);
+                return restClient.get().uri(uri).retrieve().body(String.class);
+            }
+            throw e;
+        }
+    }
+
     /** espell API로 PubMed 철자 교정어 반환. 교정 불필요시 null */
     private String checkSpelling(String query) {
         URI spellUri = UriComponentsBuilder.fromUriString(BASE_URL + "/espell.fcgi")
@@ -40,7 +54,7 @@ public class PubMedService {
                 return corrected;
             }
         } catch (Exception e) {
-            log.warn("PubMed espell 오류", e);
+            log.debug("PubMed espell 생략 ({}): {}", e.getClass().getSimpleName(), e.getMessage());
         }
         return null;
     }
@@ -63,14 +77,14 @@ public class PubMedService {
         List<String> pmids = new ArrayList<>();
         int totalCount = 0;
         try {
-            String searchResponse = restClient.get().uri(searchUri).retrieve().body(String.class);
+            String searchResponse = fetchWithRetry(searchUri);
             JsonNode esearchResult = objectMapper.readTree(searchResponse).path("esearchresult");
             totalCount = esearchResult.path("count").asInt(0);
             for (JsonNode id : esearchResult.path("idlist")) {
                 pmids.add(id.asText());
             }
         } catch (Exception e) {
-            log.error("PubMed esearch 오류", e);
+            log.warn("PubMed esearch 실패 (query='{}'): {}", query, e.getMessage());
             return SearchResponse.builder()
                     .papers(List.of()).total(0).page(page).size(size).tooBroad(false).build();
         }
@@ -91,7 +105,7 @@ public class PubMedService {
 
         List<PaperSummary> results = new ArrayList<>();
         try {
-            String summaryResponse = restClient.get().uri(summaryUri).retrieve().body(String.class);
+            String summaryResponse = fetchWithRetry(summaryUri);
             JsonNode resultNode = objectMapper.readTree(summaryResponse).path("result");
 
             for (String pmid : pmids) {
@@ -112,7 +126,7 @@ public class PubMedService {
                         .build());
             }
         } catch (Exception e) {
-            log.error("PubMed esummary 오류", e);
+            log.warn("PubMed esummary 실패: {}", e.getMessage());
         }
 
         return SearchResponse.builder()

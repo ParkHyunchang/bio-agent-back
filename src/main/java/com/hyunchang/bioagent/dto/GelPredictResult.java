@@ -14,4 +14,6 @@ public class GelPredictResult {
     private Double modelRmse;
     /** 이미지에서 추출된 특징값 (참고용) */
     private Map<String, Object> features;
+    /** 경고 메시지 (밴드 검출 이상 시) */
+    private String warning;
 }

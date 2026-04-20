@@ -1,3 +1,3 @@
-com\hyunchang\bioagent\controller\HealthController.class
 com\hyunchang\bioagent\config\WebConfig.class
 com\hyunchang\bioagent\BioAgentApplication.class
+com\hyunchang\bioagent\controller\HealthController.class

@@ -177,6 +177,36 @@ public class GelService {
         }
     }
 
+    // ── 에이전트용: 바이트 배열로 직접 예측 ─────────────────────────
+
+    public GelPredictResult predictFromBytes(byte[] imageBytes, String filename) throws Exception {
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        ByteArrayResource resource = new ByteArrayResource(imageBytes) {
+            @Override public String getFilename() { return filename; }
+        };
+        body.add("file", resource);
+
+        String response = restClient.post()
+                .uri(mlServiceUrl + "/predict")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+
+        JsonNode root = objectMapper.readTree(response);
+        GelPredictResult result = new GelPredictResult();
+        result.setPredictedCt(root.path("predicted_ct").asDouble());
+        result.setModelR2(root.path("model_r2").asDouble());
+        result.setModelRmse(root.path("model_rmse").asDouble());
+        if (root.path("features").isObject()) {
+            result.setFeatures(objectMapper.convertValue(root.path("features"), new TypeReference<Map<String, Object>>() {}));
+        }
+        if (root.path("features").path("warning").isTextual()) {
+            result.setWarning(root.path("features").path("warning").asText());
+        }
+        return result;
+    }
+
     // ── 내부 헬퍼 ─────────────────────────────────────────────────
 
     private JsonNode callExtract(MultipartFile file) throws Exception {
