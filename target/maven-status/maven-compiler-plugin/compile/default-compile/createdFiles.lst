@@ -1,3 +1,5 @@
 com\hyunchang\bioagent\config\WebConfig.class
+com\hyunchang\bioagent\dto\GelLanePredictionDto.class
 com\hyunchang\bioagent\BioAgentApplication.class
 com\hyunchang\bioagent\controller\HealthController.class
+com\hyunchang\bioagent\controller\GelController$1.class
