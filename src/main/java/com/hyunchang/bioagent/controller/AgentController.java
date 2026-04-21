@@ -11,9 +11,12 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import org.apache.catalina.connector.ClientAbortException;
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -57,12 +60,20 @@ public class AgentController {
                         .data("{\"sessionId\":\"" + resolvedSessionId + "\",\"message\":"
                                 + escapeJson(response) + "}"));
                 emitter.complete();
+            } catch (ClientAbortException e) {
+                log.info("클라이언트가 스트리밍을 중단했습니다 (sessionId={})", resolvedSessionId);
+                emitter.complete();
             } catch (Exception e) {
-                log.error("에이전트 스트리밍 실패", e);
-                try {
-                    emitter.send(SseEmitter.event().name("error").data(e.getMessage()));
-                } catch (IOException ignored) {}
-                emitter.completeWithError(e);
+                if (e.getCause() instanceof ClientAbortException) {
+                    log.info("클라이언트가 스트리밍을 중단했습니다 (sessionId={})", resolvedSessionId);
+                    emitter.complete();
+                } else {
+                    log.error("에이전트 스트리밍 실패", e);
+                    try {
+                        emitter.send(SseEmitter.event().name("error").data(Objects.requireNonNullElse(e.getMessage(), "알 수 없는 오류")));
+                    } catch (IOException ignored) {}
+                    emitter.completeWithError(e);
+                }
             }
         });
 
