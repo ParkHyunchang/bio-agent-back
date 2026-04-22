@@ -1,4 +1,5 @@
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\controller\HealthController.java
+C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto\PaperReviewRecordDto.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\entity\GelRecord.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto\OcrResultDto.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\entity\AgentSession.java
@@ -32,6 +33,8 @@ C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto\SearchResponse.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\BioAgentApplication.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\dto\ReviewRequest.java
+C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\entity\PaperReviewRecord.java
+C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\repository\PaperReviewRecordRepository.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\service\InterpretationService.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\entity\AgentMessage.java
 C:\Users\hyunc\workspace\bio-agent-back\src\main\java\com\hyunchang\bioagent\controller\AgentController.java
