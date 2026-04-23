@@ -143,8 +143,15 @@ public class AgentToolHandler {
 
     private String runAnalyzeGelImage(byte[] imageBytes, String filename) throws Exception {
         if (imageBytes == null) return "{\"error\": \"이미지가 없습니다.\"}";
+        log.info("젤 이미지 분석 시작: file={}, size={}bytes", filename, imageBytes.length);
         var lanes = gelTrainingService.predictMultiLaneFromBytes(
                 imageBytes, filename != null ? filename : "image.png");
+        long detected = lanes.stream()
+                .filter(l -> !Boolean.TRUE.equals(l.getIsNegative())
+                          && !"M".equals(l.getConcentrationLabel())
+                          && !"NTC".equals(l.getConcentrationLabel()))
+                .count();
+        log.info("젤 이미지 분석 완료: 전체 레인={}개, 밴드 검출={}개", lanes.size(), detected);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("lanes", lanes);
         result.put("lane_count", lanes.size());
@@ -232,8 +239,11 @@ public class AgentToolHandler {
         double modelRmse     = input.path("model_rmse").asDouble(0);
         double bandIntensity = input.path("band_intensity").asDouble(0);
         int lanesDetected    = input.path("lanes_detected").asInt(0);
+        log.info("결과 해석 요청: predictedCt={}, modelR2={}, modelRmse={}", predictedCt, modelR2, modelRmse);
         InterpretationResult result = interpretationService.interpret(
                 predictedCt, modelR2, modelRmse, bandIntensity, lanesDetected);
+        log.info("결과 해석 완료: classification={}, reliability={}, retest={}",
+                result.getClassification(), result.getModelReliability(), result.isRetestRecommended());
         return objectMapper.writeValueAsString(result);
     }
 

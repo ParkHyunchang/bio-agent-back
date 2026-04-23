@@ -85,6 +85,10 @@ public class AgentService {
             return "Anthropic API 키가 설정되지 않았습니다.";
         }
 
+        log.info("에이전트 채팅 시작: sessionId={}, hasImage={}, message='{}'",
+                sessionId, imageBytes != null,
+                userMessage.length() > 60 ? userMessage.substring(0, 60) + "..." : userMessage);
+
         List<Map<String, Object>> messages = conversationStore.loadForClaude(sessionId);
         log.info("대화 히스토리 로드: sessionId={}, 이전 메시지={}개", sessionId, messages.size());
 
@@ -98,6 +102,7 @@ public class AgentService {
 
             if ("end_turn".equals(stopReason)) {
                 String text = extractText(response);
+                log.info("에이전트 응답 완료: sessionId={}, 응답={}자", sessionId, text.length());
                 messages.add(Map.of("role", "assistant", "content",
                         List.of(Map.of("type", "text", "text", text))));
                 conversationStore.save(sessionId, messages);
@@ -110,10 +115,12 @@ public class AgentService {
                         response.path("content"), imageBytes, filename, progressCallback);
                 messages.add(Map.of("role", "user", "content", toolResults));
             } else {
+                log.warn("에이전트 예상치 못한 stop_reason={}, 루프 종료", stopReason);
                 break;
             }
         }
 
+        log.warn("에이전트 최대 반복 횟수 초과: sessionId={}, maxIterations={}", sessionId, MAX_ITERATIONS);
         return "에이전트 응답 처리 중 오류가 발생했습니다.";
     }
 
@@ -152,6 +159,8 @@ public class AgentService {
         requestBody.put("system", SYSTEM_PROMPT);
         requestBody.put("tools", tools);
         requestBody.put("messages", messages);
+        log.info("Claude API 호출: model={}, messages={}개, tools={}개",
+                MODEL, messages.size(), tools.size());
         try {
             String response = restClient.post()
                     .uri(ANTHROPIC_URL)
@@ -163,7 +172,7 @@ public class AgentService {
                     .body(String.class);
             return objectMapper.readTree(response);
         } catch (Exception e) {
-            log.error("Claude API 호출 실패", e);
+            log.error("Claude API 호출 실패: {}", e.getMessage(), e);
             throw new RuntimeException("Claude API 호출 실패: " + e.getMessage(), e);
         }
     }

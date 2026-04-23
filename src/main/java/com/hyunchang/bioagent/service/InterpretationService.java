@@ -1,6 +1,7 @@
 package com.hyunchang.bioagent.service;
 
 import com.hyunchang.bioagent.dto.InterpretationResult;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -10,6 +11,7 @@ import java.util.List;
  * Ct값, 모델 성능, 밴드 품질을 기반으로 구조화된 해석 결과를 생성합니다.
  * 이 로직은 Claude의 추론이 아닌 코드로 확정된 기준을 적용합니다.
  */
+@Slf4j
 @Service
 public class InterpretationService {
 
@@ -27,7 +29,7 @@ public class InterpretationService {
         boolean retest           = shouldRetest(predictedCt, modelR2, modelRmse, lanesDetected);
         String recommendation    = buildRecommendation(predictedCt, modelR2, modelRmse, lanesDetected, retest);
 
-        return InterpretationResult.builder()
+        InterpretationResult result = InterpretationResult.builder()
                 .classification(classification)
                 .ctRangeDescription(ctRangeDesc)
                 .modelReliability(modelReliability)
@@ -35,6 +37,9 @@ public class InterpretationService {
                 .retestRecommended(retest)
                 .recommendation(recommendation)
                 .build();
+        log.info("해석 결과: ct={} → {} (신뢰도={}, 밴드={}, 재검={})",
+                predictedCt, classification, modelReliability, bandQuality, retest);
+        return result;
     }
 
     // ── Ct값 분류 ────────────────────────────────────────────────

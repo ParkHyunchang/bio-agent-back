@@ -133,7 +133,9 @@ public class GelTrainingService {
                 }).toList();
         List<Double> ctValues = records.stream().map(GelRecord::getCtValue).toList();
         Map<String, Object> trainRequest = Map.of("features", features, "ct_values", ctValues);
-        log.info("모델 학습 요청: {}개 샘플", records.size());
+        log.info("모델 학습 시작 - 샘플 {}개, 특징 차원: band_intensity/band_area/relative_intensity/band_width/band_height",
+                records.size());
+        log.info("ML 서비스 호출: POST {}/train", mlServiceUrl);
         String response = restClient.post()
                 .uri(mlServiceUrl + "/train")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -141,7 +143,11 @@ public class GelTrainingService {
                 .retrieve()
                 .body(String.class);
         try {
-            return objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> result = objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});
+            log.info("모델 학습 완료 - 모델: {}, 샘플: {}, train_R²: {}, CV_R²: {}, RMSE: {} Ct",
+                    result.get("model_type"), result.get("sample_count"),
+                    result.get("train_r2"), result.get("cv_r2_mean"), result.get("train_rmse"));
+            return result;
         } catch (Exception e) {
             throw new RuntimeException("학습 응답 파싱 실패: " + e.getMessage(), e);
         }
@@ -157,7 +163,10 @@ public class GelTrainingService {
                 .body(buildFileBody(file.getBytes(), file.getOriginalFilename()))
                 .retrieve()
                 .body(String.class);
-        return parseGelPredictResult(objectMapper.readTree(response));
+        GelPredictResult result = parseGelPredictResult(objectMapper.readTree(response));
+        log.info("Ct 예측 완료: file={}, predictedCt={}, modelR2={}, modelRmse={}",
+                file.getOriginalFilename(), result.getPredictedCt(), result.getModelR2(), result.getModelRmse());
+        return result;
     }
 
     public List<GelLanePredictionDto> predictGelLanes(MultipartFile file) throws Exception {
