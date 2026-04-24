@@ -34,8 +34,144 @@ public class GelTrainingService {
     private static final String ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
     private final GelDataService gelDataService;
+    private final RestClient mlRestClient;
+    private final RestClient anthropicRestClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final RestClient restClient = RestClient.create();
+
+    // ── 대량 업로드 (ZIP + labels.csv) ───────────────────────────────
+
+    /**
+     * ZIP 파일을 해제해 이미지 + labels.csv로 일괄 학습 데이터 등록.
+     * labels.csv 형식: 첫 줄 헤더 "filename,ct_value". 이후 각 줄은 매칭 이미지와 Ct값.
+     */
+    public Map<String, Object> bulkUploadZip(MultipartFile zipFile) throws Exception {
+        final int MAX_ENTRIES = 500;
+        final long MAX_TOTAL_BYTES = 200L * 1024 * 1024; // 200MB 압축 해제 총량
+        final long MAX_ENTRY_BYTES = 20L * 1024 * 1024;
+
+        Map<String, byte[]> imageBytes = new LinkedHashMap<>();
+        String csvText = null;
+
+        try (java.util.zip.ZipInputStream zis =
+                     new java.util.zip.ZipInputStream(zipFile.getInputStream())) {
+            java.util.zip.ZipEntry entry;
+            long totalBytes = 0;
+            int entries = 0;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (++entries > MAX_ENTRIES) {
+                    throw new IllegalArgumentException("ZIP 엔트리가 너무 많습니다 (최대 " + MAX_ENTRIES + "개).");
+                }
+                String name = entry.getName();
+                // 경로 traversal 방지
+                if (name.contains("..") || name.startsWith("/") || name.contains("\\..\\")) {
+                    throw new IllegalArgumentException("허용되지 않은 경로: " + name);
+                }
+                if (entry.isDirectory()) continue;
+                String baseName = java.nio.file.Paths.get(name).getFileName().toString();
+                if (baseName.startsWith(".") || baseName.startsWith("__MACOSX")) continue;
+
+                java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                int read;
+                long entryBytes = 0;
+                while ((read = zis.read(chunk)) > 0) {
+                    entryBytes += read;
+                    totalBytes += read;
+                    if (entryBytes > MAX_ENTRY_BYTES) {
+                        throw new IllegalArgumentException("파일이 너무 큽니다: " + baseName);
+                    }
+                    if (totalBytes > MAX_TOTAL_BYTES) {
+                        throw new IllegalArgumentException("총 크기가 제한을 초과했습니다.");
+                    }
+                    buf.write(chunk, 0, read);
+                }
+                byte[] bytes = buf.toByteArray();
+
+                String lower = baseName.toLowerCase();
+                if (lower.endsWith(".csv") || lower.equals("labels.csv")) {
+                    csvText = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                } else if (lower.endsWith(".png") || lower.endsWith(".jpg")
+                        || lower.endsWith(".jpeg") || lower.endsWith(".webp")) {
+                    imageBytes.put(baseName, bytes);
+                }
+            }
+        }
+
+        if (csvText == null) {
+            throw new IllegalArgumentException("ZIP 안에 labels.csv가 필요합니다 (filename,ct_value).");
+        }
+        if (imageBytes.isEmpty()) {
+            throw new IllegalArgumentException("ZIP 안에 이미지 파일이 없습니다.");
+        }
+
+        List<Map<String, Object>> errors = new ArrayList<>();
+        int succeeded = 0, duplicates = 0, failed = 0, processed = 0;
+
+        String[] lines = csvText.split("\\r?\\n");
+        boolean headerSeen = false;
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (line.isEmpty()) continue;
+            if (!headerSeen) {
+                headerSeen = true;
+                // 첫 줄이 헤더 형태면 스킵
+                if (line.toLowerCase().contains("filename") && line.toLowerCase().contains("ct")) continue;
+            }
+            processed++;
+            String[] parts = line.split(",", 2);
+            if (parts.length < 2) {
+                failed++;
+                errors.add(Map.of("line", line, "error", "형식 오류 (filename,ct_value 필요)"));
+                continue;
+            }
+            String filename = parts[0].trim();
+            Double ct;
+            try {
+                ct = Double.parseDouble(parts[1].trim());
+            } catch (NumberFormatException e) {
+                failed++;
+                errors.add(Map.of("filename", filename, "error", "ct_value 숫자 형식 오류"));
+                continue;
+            }
+            byte[] bytes = imageBytes.get(filename);
+            if (bytes == null) {
+                failed++;
+                errors.add(Map.of("filename", filename, "error", "ZIP에 이미지가 없습니다"));
+                continue;
+            }
+            try {
+                uploadTrainingData(new InMemoryMultipartFile(filename, guessMime(filename), bytes), ct);
+                succeeded++;
+            } catch (IllegalArgumentException e) {
+                if ("DUPLICATE".equals(e.getMessage())) {
+                    duplicates++;
+                } else {
+                    failed++;
+                    errors.add(Map.of("filename", filename, "error", e.getMessage()));
+                }
+            } catch (Exception e) {
+                log.error("bulkUpload 실패 {}: {}", filename, e.getMessage());
+                failed++;
+                errors.add(Map.of("filename", filename, "error", "처리 실패"));
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("processed", processed);
+        result.put("succeeded", succeeded);
+        result.put("duplicates", duplicates);
+        result.put("failed", failed);
+        result.put("errors", errors);
+        log.info("bulk 업로드 완료: 처리={}, 성공={}, 중복={}, 실패={}", processed, succeeded, duplicates, failed);
+        return result;
+    }
+
+    private static String guessMime(String filename) {
+        String lower = filename.toLowerCase();
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".webp")) return "image/webp";
+        return "image/jpeg";
+    }
 
     // ── 단일 이미지 학습 데이터 업로드 ──────────────────────────────
 
@@ -136,7 +272,7 @@ public class GelTrainingService {
         log.info("모델 학습 시작 - 샘플 {}개, 특징 차원: band_intensity/band_area/relative_intensity/band_width/band_height",
                 records.size());
         log.info("ML 서비스 호출: POST {}/train", mlServiceUrl);
-        String response = restClient.post()
+        String response = mlRestClient.post()
                 .uri(mlServiceUrl + "/train")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(trainRequest)
@@ -147,6 +283,7 @@ public class GelTrainingService {
             log.info("모델 학습 완료 - 모델: {}, 샘플: {}, train_R²: {}, CV_R²: {}, RMSE: {} Ct",
                     result.get("model_type"), result.get("sample_count"),
                     result.get("train_r2"), result.get("cv_r2_mean"), result.get("train_rmse"));
+            invalidateModelStatusCache();
             return result;
         } catch (Exception e) {
             throw new RuntimeException("학습 응답 파싱 실패: " + e.getMessage(), e);
@@ -157,7 +294,7 @@ public class GelTrainingService {
 
     public GelPredictResult predict(MultipartFile file) throws Exception {
         log.info("Ct 예측 요청: {}", file.getOriginalFilename());
-        String response = restClient.post()
+        String response = mlRestClient.post()
                 .uri(mlServiceUrl + "/predict")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(buildFileBody(file.getBytes(), file.getOriginalFilename()))
@@ -184,7 +321,7 @@ public class GelTrainingService {
     }
 
     public GelPredictResult predictFromBytes(byte[] imageBytes, String filename) throws Exception {
-        String response = restClient.post()
+        String response = mlRestClient.post()
                 .uri(mlServiceUrl + "/predict")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(buildFileBody(imageBytes, filename))
@@ -224,7 +361,7 @@ public class GelTrainingService {
                 Map.of("type", "text", "text", prompt)
         ))));
         log.info("Claude Vision Ct값 추출 요청 (imageSize={}bytes)", imageBytes.length);
-        String response = restClient.post()
+        String response = anthropicRestClient.post()
                 .uri(ANTHROPIC_URL)
                 .header("x-api-key", anthropicApiKey)
                 .header("anthropic-version", "2023-06-01")
@@ -247,29 +384,81 @@ public class GelTrainingService {
     // ── 모델 상태 / 초기화 ─────────────────────────────────────────
 
     public void resetModel() {
-        restClient.delete()
+        mlRestClient.delete()
                 .uri(mlServiceUrl + "/model")
                 .retrieve()
                 .toBodilessEntity();
         log.info("ML 모델 초기화 완료");
+        invalidateModelStatusCache();
     }
 
+    // ── /model/status 단기 캐시 (에이전트 다중 도구 호출 시 중복 라운드트립 억제) ──
+    private static final long STATUS_CACHE_TTL_MS = 5_000L;
+    private volatile Map<String, Object> modelStatusCache;
+    private volatile long modelStatusCacheExpiry;
+
     public Map<String, Object> getModelStatus() {
-        String response = restClient.get()
+        long now = System.currentTimeMillis();
+        Map<String, Object> cached = modelStatusCache;
+        if (cached != null && now < modelStatusCacheExpiry) {
+            return cached;
+        }
+        String response = mlRestClient.get()
                 .uri(mlServiceUrl + "/model/status")
+                .retrieve()
+                .body(String.class);
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});
+            modelStatusCache = parsed;
+            modelStatusCacheExpiry = now + STATUS_CACHE_TTL_MS;
+            return parsed;
+        } catch (Exception e) {
+            throw new RuntimeException("상태 조회 응답 파싱 실패: " + e.getMessage(), e);
+        }
+    }
+
+    private void invalidateModelStatusCache() {
+        modelStatusCache = null;
+        modelStatusCacheExpiry = 0L;
+    }
+
+    // ── 모델 버전 관리 ─────────────────────────────────────────────
+
+    public Map<String, Object> listModelVersions() {
+        String response = mlRestClient.get()
+                .uri(mlServiceUrl + "/model/versions")
                 .retrieve()
                 .body(String.class);
         try {
             return objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            throw new RuntimeException("상태 조회 응답 파싱 실패: " + e.getMessage(), e);
+            throw new RuntimeException("버전 목록 응답 파싱 실패: " + e.getMessage(), e);
+        }
+    }
+
+    public Map<String, Object> rollbackModel(String versionId) {
+        if (versionId == null || versionId.isBlank()) {
+            throw new IllegalArgumentException("version_id가 필요합니다.");
+        }
+        Map<String, String> body = Map.of("version_id", versionId);
+        String response = mlRestClient.post()
+                .uri(mlServiceUrl + "/model/rollback")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(String.class);
+        invalidateModelStatusCache();
+        try {
+            return objectMapper.readValue(response, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new RuntimeException("롤백 응답 파싱 실패: " + e.getMessage(), e);
         }
     }
 
     // ── 내부 헬퍼 ──────────────────────────────────────────────────
 
     private JsonNode callExtract(MultipartFile file) throws Exception {
-        String response = restClient.post()
+        String response = mlRestClient.post()
                 .uri(mlServiceUrl + "/extract")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(buildFileBody(file.getBytes(), file.getOriginalFilename()))
@@ -281,7 +470,7 @@ public class GelTrainingService {
     private JsonNode callExtractGel(byte[] imageBytes, String filename) throws Exception {
         MultiValueMap<String, Object> body = buildFileBody(imageBytes, filename);
         body.add("n_lanes", "10");
-        String response = restClient.post()
+        String response = mlRestClient.post()
                 .uri(mlServiceUrl + "/extract-gel")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(body)
@@ -293,7 +482,7 @@ public class GelTrainingService {
     private JsonNode callPredictGel(byte[] imageBytes, String filename) throws Exception {
         MultiValueMap<String, Object> body = buildFileBody(imageBytes, filename);
         body.add("n_lanes", "10");
-        String response = restClient.post()
+        String response = mlRestClient.post()
                 .uri(mlServiceUrl + "/predict-gel")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(body)

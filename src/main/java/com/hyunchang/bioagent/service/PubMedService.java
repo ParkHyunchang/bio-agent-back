@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.bioagent.dto.PaperDetail;
 import com.hyunchang.bioagent.dto.PaperSummary;
 import com.hyunchang.bioagent.dto.SearchResponse;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -16,11 +17,12 @@ import java.util.List;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class PubMedService {
 
     private static final String BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 
-    private final RestClient restClient = RestClient.create();
+    private final RestClient pubmedRestClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final int TOO_BROAD_THRESHOLD = 200;
@@ -28,12 +30,12 @@ public class PubMedService {
     /** 429 Rate Limit 시 1초 대기 후 1회 재시도하는 GET 헬퍼 */
     private String fetchWithRetry(URI uri) throws Exception {
         try {
-            return restClient.get().uri(uri).retrieve().body(String.class);
+            return pubmedRestClient.get().uri(uri).retrieve().body(String.class);
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("429")) {
                 log.warn("PubMed rate limit 감지, 1.1초 대기 후 재시도");
                 Thread.sleep(1100);
-                return restClient.get().uri(uri).retrieve().body(String.class);
+                return pubmedRestClient.get().uri(uri).retrieve().body(String.class);
             }
             throw e;
         }
@@ -47,7 +49,7 @@ public class PubMedService {
                 .queryParam("retmode", "json")
                 .build().toUri();
         try {
-            String response = restClient.get().uri(spellUri).retrieve().body(String.class);
+            String response = pubmedRestClient.get().uri(spellUri).retrieve().body(String.class);
             String corrected = objectMapper.readTree(response)
                     .path("esearchresult").path("correctedquery").asText("");
             if (!corrected.isBlank() && !corrected.equalsIgnoreCase(query)) {
@@ -149,7 +151,7 @@ public class PubMedService {
 
         PaperSummary summary;
         try {
-            String summaryResponse = restClient.get().uri(summaryUri).retrieve().body(String.class);
+            String summaryResponse = pubmedRestClient.get().uri(summaryUri).retrieve().body(String.class);
             JsonNode paper = objectMapper.readTree(summaryResponse).path("result").path(pmid);
 
             List<String> authors = new ArrayList<>();
@@ -179,7 +181,7 @@ public class PubMedService {
 
         String abstractText = "";
         try {
-            abstractText = restClient.get().uri(abstractUri).retrieve().body(String.class);
+            abstractText = pubmedRestClient.get().uri(abstractUri).retrieve().body(String.class);
         } catch (Exception e) {
             log.warn("PubMed 초록 조회 오류 pmid={}", pmid, e);
         }

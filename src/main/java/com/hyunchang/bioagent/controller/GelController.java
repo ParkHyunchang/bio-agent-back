@@ -45,6 +45,29 @@ public class GelController {
         }
     }
 
+    /** 대량 업로드 (ZIP + labels.csv) */
+    @PostMapping("/bulk-upload")
+    public ResponseEntity<?> bulkUpload(@RequestParam("file") MultipartFile zip) {
+        if (zip == null || zip.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "ZIP 파일이 필요합니다."));
+        }
+        String ct = zip.getContentType();
+        String name = zip.getOriginalFilename();
+        boolean isZip = (ct != null && (ct.contains("zip") || ct.equals("application/octet-stream")))
+                || (name != null && name.toLowerCase().endsWith(".zip"));
+        if (!isZip) {
+            return ResponseEntity.badRequest().body(Map.of("error", "ZIP 파일만 업로드할 수 있습니다."));
+        }
+        try {
+            return ResponseEntity.ok(gelTrainingService.bulkUploadZip(zip));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("대량 업로드 실패: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "업로드 처리 중 오류"));
+        }
+    }
+
     /** 멀티레인 학습 데이터 등록 */
     @PostMapping("/upload-gel")
     public ResponseEntity<?> uploadGel(
@@ -163,6 +186,34 @@ public class GelController {
         } catch (Exception e) {
             log.error("모델 상태 조회 실패: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /** 저장된 모델 버전 목록 */
+    @GetMapping("/model/versions")
+    public ResponseEntity<Map<String, Object>> modelVersions() {
+        try {
+            return ResponseEntity.ok(gelTrainingService.listModelVersions());
+        } catch (Exception e) {
+            log.error("모델 버전 목록 조회 실패: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "조회 실패"));
+        }
+    }
+
+    /** 특정 버전으로 모델 롤백 */
+    @PostMapping("/model/rollback")
+    public ResponseEntity<?> modelRollback(@RequestBody Map<String, String> body) {
+        String versionId = body != null ? body.get("version_id") : null;
+        if (versionId == null || versionId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "version_id가 필요합니다."));
+        }
+        try {
+            return ResponseEntity.ok(gelTrainingService.rollbackModel(versionId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("모델 롤백 실패: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "롤백 실패"));
         }
     }
 }

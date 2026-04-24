@@ -1,6 +1,8 @@
 package com.hyunchang.bioagent.repository;
 
 import com.hyunchang.bioagent.entity.AgentSession;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -10,4 +12,5 @@ public interface AgentSessionRepository extends JpaRepository<AgentSession, Long
     Optional<AgentSession> findBySessionId(String sessionId);
     void deleteBySessionId(String sessionId);
     List<AgentSession> findAllByOrderByUpdatedAtDesc();
+    Page<AgentSession> findAllByOrderByUpdatedAtDesc(Pageable pageable);
 }

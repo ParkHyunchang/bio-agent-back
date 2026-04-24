@@ -124,8 +124,12 @@ public class ConversationStore {
 
     // ── 세션 목록 (사이드바용) ────────────────────────────────────
 
-    public List<SessionSummaryDto> listSessions() {
-        return sessionRepository.findAllByOrderByUpdatedAtDesc().stream()
+    public List<SessionSummaryDto> listSessions(int page, int size) {
+        int safeSize = Math.max(1, Math.min(size, 200));
+        int safePage = Math.max(0, page);
+        return sessionRepository
+                .findAllByOrderByUpdatedAtDesc(org.springframework.data.domain.PageRequest.of(safePage, safeSize))
+                .stream()
                 .map(s -> new SessionSummaryDto(
                         s.getSessionId(),
                         s.getPreview() != null ? s.getPreview() : "이미지 분석",

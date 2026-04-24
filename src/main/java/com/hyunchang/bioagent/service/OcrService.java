@@ -7,20 +7,25 @@ import com.hyunchang.bioagent.dto.OcrResultDto;
 import com.hyunchang.bioagent.entity.ExamItem;
 import com.hyunchang.bioagent.entity.ExamRecord;
 import com.hyunchang.bioagent.repository.ExamRecordRepository;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -32,18 +37,34 @@ public class OcrService {
     // ════════════════════════════════════════════════════════════════
     private static final String ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
     private static final String MODEL = "claude-sonnet-4-6";
+    private static final String GENERIC_ERROR_MESSAGE = "OCR 처리 중 오류가 발생했습니다.";
+    private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024; // 10MB
+    private static final Set<String> ALLOWED_MIME = Set.of(
+            "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"
+    );
 
     @Value("${anthropic.api.key:}")
     private String apiKey;
 
     private final ExamRecordRepository examRecordRepository;
+    private final RestClient anthropicRestClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final org.springframework.web.client.RestClient restClient =
-            org.springframework.web.client.RestClient.create();
 
     // 병렬 처리용 스레드 풀
     // Claude API 레이트 리밋(50 RPM) 여유 있게 유지하기 위해 5개로 제한
     private final ExecutorService executor = Executors.newFixedThreadPool(5);
+
+    @PreDestroy
+    public void shutdownExecutor() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
 
     // ── 공개 API ────────────────────────────────────────────────────
 
@@ -51,18 +72,32 @@ public class OcrService {
     public List<OcrResultDto> extractAndSaveAll(List<MultipartFile> files) {
         log.info("OCR 병렬 처리 시작: {}장", files.size());
 
+        // 병렬 작업에 현재 요청의 correlation ID MDC 전파
+        final java.util.Map<String, String> mdcSnapshot = MDC.getCopyOfContextMap();
+
         List<CompletableFuture<OcrResultDto>> futures = files.stream()
                 .map(file -> CompletableFuture.supplyAsync(() -> {
+                    if (mdcSnapshot != null) MDC.setContextMap(mdcSnapshot);
                     try {
                         log.info("OCR 처리 중: {}", file.getOriginalFilename());
+                        validateFile(file);
                         return extractAndSave(file);
+                    } catch (IllegalArgumentException e) {
+                        log.warn("OCR 파일 거부: {} — {}", file.getOriginalFilename(), e.getMessage());
+                        OcrResultDto err = new OcrResultDto();
+                        err.setFileName(file.getOriginalFilename());
+                        err.setDocumentType("거부");
+                        err.setRawText(e.getMessage());
+                        return err;
                     } catch (Exception e) {
                         log.error("OCR 처리 실패: {}", file.getOriginalFilename(), e);
                         OcrResultDto err = new OcrResultDto();
                         err.setFileName(file.getOriginalFilename());
                         err.setDocumentType("오류");
-                        err.setRawText("처리 중 오류가 발생했습니다: " + e.getMessage());
+                        err.setRawText(GENERIC_ERROR_MESSAGE);
                         return err;
+                    } finally {
+                        MDC.clear();
                     }
                 }, executor))
                 .toList();
@@ -99,7 +134,7 @@ public class OcrService {
                 "messages", List.of(message)
         );
 
-        String response = restClient.post()
+        String response = anthropicRestClient.post()
                 .uri(ANTHROPIC_URL)
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", "2023-06-01")
@@ -157,13 +192,26 @@ public class OcrService {
                 .stream().map(this::toDto).toList();
     }
 
+    public List<OcrResultDto> findAll(int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size, 200));
+        return examRecordRepository
+                .findAllByOrderByCreatedAtDesc(org.springframework.data.domain.PageRequest.of(safePage, safeSize))
+                .stream().map(this::toDto).toList();
+    }
+
     public OcrResultDto findById(Long id) {
         return examRecordRepository.findById(id)
                 .map(this::toDto)
-                .orElseThrow(() -> new IllegalArgumentException("Record not found: " + id));
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "해당 기록을 찾을 수 없습니다."));
     }
 
     public void deleteById(Long id) {
+        if (id == null || !examRecordRepository.existsById(id)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "해당 기록을 찾을 수 없습니다.");
+        }
         examRecordRepository.deleteById(id);
     }
 
@@ -203,6 +251,20 @@ public class OcrService {
             return text.substring(start, end + 1);
         }
         return text.trim();
+    }
+
+    private void validateFile(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("빈 파일입니다.");
+        }
+        if (file.getSize() > MAX_IMAGE_BYTES) {
+            throw new IllegalArgumentException(
+                    "이미지 크기가 제한을 초과했습니다 (최대 " + (MAX_IMAGE_BYTES / (1024 * 1024)) + "MB).");
+        }
+        String ct = file.getContentType();
+        if (ct == null || !ALLOWED_MIME.contains(ct.toLowerCase())) {
+            throw new IllegalArgumentException("허용되지 않은 이미지 형식입니다: " + ct);
+        }
     }
 
     private String resolveMediaType(String contentType) {

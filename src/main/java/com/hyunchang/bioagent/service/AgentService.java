@@ -31,10 +31,15 @@ public class AgentService {
             - mecA 프라이머(Tm=59.72°C)의 앰플리콘은 약 280~300bp
             - 각 레인은 10배 희석 계열 (10^8이 최고 농도)
 
+            ## 용어 규칙 (반드시 준수)
+            - 사용자 화면에서는 "학습 데이터"라는 용어만 사용합니다.
+            - "과거 실험", "과거 데이터", "이전 실험" 같은 표현은 절대 사용하지 않습니다.
+            - search_past_experiments 도구가 반환하는 데이터는 "등록된 학습 데이터"입니다.
+
             ## 이미지 분석 시 도구 순서 (반드시 이 순서 준수)
             1. analyze_gel_image 호출 → 10개 레인별 Ct 예측값 및 밴드 특징 획득
             2. interpret_result 호출 → 대표 레인(10^5 권장)의 값으로 구조화된 해석 획득
-            3. search_past_experiments 호출 → 과거 유사 실험 비교 (totalRecords > 0일 때)
+            3. search_past_experiments 호출 → 유사 학습 데이터 비교 (totalRecords > 0일 때)
             4. 세 도구 결과를 종합하여 자연어 답변
 
             ## analyze_gel_image 결과 해석 규칙
@@ -52,8 +57,11 @@ public class AgentService {
             - **권장 사항**: retestRecommended가 true면 재검 강조
 
             ## search_past_experiments 결과 활용
-            - similarCount가 0이면 "유사 실험 없음"으로 처리
-            - inTypicalRange가 true/false에 따라 정상/이상 여부 언급
+            - 섹션 제목은 반드시 "📁 학습 데이터 비교" 로 표기합니다.
+            - similarCount는 "유사 학습 데이터 수", totalRecords는 "전체 학습 데이터 수" 로 표기합니다.
+            - 통계 라벨은 "유사 학습 데이터 평균 Ct", "전체 학습 데이터 평균 Ct" 로 표기합니다.
+            - similarCount가 0이면 "유사 학습 데이터 없음"으로 처리합니다.
+            - inTypicalRange가 true/false에 따라 "학습 데이터 일반 범위 내/이상치" 로 언급합니다.
 
             ## search_papers 사용 시점
             - 사용자가 논문, 관련 연구, 과학적 근거를 요청할 때
@@ -70,8 +78,8 @@ public class AgentService {
 
     private final AgentToolHandler agentToolHandler;
     private final ConversationStore conversationStore;
+    private final RestClient anthropicRestClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final RestClient restClient = RestClient.create();
 
     // ── 공개 메서드 ────────────────────────────────────────────────
 
@@ -132,8 +140,8 @@ public class AgentService {
         return conversationStore.loadDisplay(sessionId);
     }
 
-    public List<com.hyunchang.bioagent.dto.SessionSummaryDto> getSessions() {
-        return conversationStore.listSessions();
+    public List<com.hyunchang.bioagent.dto.SessionSummaryDto> getSessions(int page, int size) {
+        return conversationStore.listSessions(page, size);
     }
 
     // ── 내부 헬퍼 ──────────────────────────────────────────────────
@@ -162,7 +170,7 @@ public class AgentService {
         log.info("Claude API 호출: model={}, messages={}개, tools={}개",
                 MODEL, messages.size(), tools.size());
         try {
-            String response = restClient.post()
+            String response = anthropicRestClient.post()
                     .uri(ANTHROPIC_URL)
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")

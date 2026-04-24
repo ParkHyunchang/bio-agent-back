@@ -72,8 +72,9 @@ public class AgentToolHandler {
 
         tools.add(Map.of(
                 "name", "search_past_experiments",
-                "description", "과거 학습 데이터에서 현재 예측 Ct값과 유사한 실험을 검색합니다. "
-                        + "유사 실험 목록, 통계(평균·범위), 현재 값이 과거 데이터의 일반 범위 내에 있는지 반환합니다.",
+                "description", "등록된 학습 데이터에서 현재 예측 Ct값과 유사한 학습 샘플을 검색합니다. "
+                        + "유사 학습 데이터 목록, 통계(평균·범위), 현재 값이 학습 데이터 일반 범위 내에 있는지 반환합니다. "
+                        + "사용자에게 보여줄 때는 반드시 '학습 데이터'라는 용어를 사용하고 '과거 실험' 같은 표현은 사용하지 마세요.",
                 "input_schema", Map.of(
                         "type", "object",
                         "properties", Map.of(
@@ -201,6 +202,8 @@ public class AgentToolHandler {
 
         log.info("학습 데이터 검색: predictedCt={}, range=±{}, 전체={}, 유사={}",
                 predictedCt, range, all.size(), similar.size());
+        // 참고: ExperimentSearchResult의 필드명(similarCount/similarExperiments/totalRecords)은
+        // API 호환성 유지 위해 유지하되, 프롬프트에서 "학습 데이터" 표현으로 렌더링하도록 지시.
         return objectMapper.writeValueAsString(result);
     }
 

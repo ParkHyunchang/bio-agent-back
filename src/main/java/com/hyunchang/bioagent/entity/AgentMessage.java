@@ -19,6 +19,10 @@ public class AgentMessage {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * 세션 식별자 (논리적 FK). DB-level FK 제약을 두지 않는 대신
+     * ConversationStore.clear()가 @Transactional로 message → session 순서 삭제를 보장한다.
+     */
     @Column(name = "session_id", nullable = false, length = 36)
     private String sessionId;
 

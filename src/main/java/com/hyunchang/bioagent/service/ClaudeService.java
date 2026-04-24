@@ -3,6 +3,7 @@ package com.hyunchang.bioagent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.bioagent.dto.PaperDetail;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -14,15 +15,17 @@ import java.util.Map;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class ClaudeService {
 
     private static final String ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
     private static final String MODEL = "claude-sonnet-4-6";
+    private static final String GENERIC_ERROR_MESSAGE = "AI 분석 중 오류가 발생했습니다.";
 
     @Value("${anthropic.api.key:}")
     private String apiKey;
 
-    private final RestClient restClient = RestClient.create();
+    private final RestClient anthropicRestClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public String reviewPaper(PaperDetail paper) {
@@ -72,7 +75,7 @@ public class ClaudeService {
         );
 
         try {
-            String response = restClient.post()
+            String response = anthropicRestClient.post()
                     .uri(ANTHROPIC_URL)
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
@@ -84,8 +87,8 @@ public class ClaudeService {
             JsonNode root = objectMapper.readTree(response);
             return root.path("content").get(0).path("text").asText();
         } catch (Exception e) {
-            log.error("Claude API 호출 오류", e);
-            return "AI 분석 중 오류가 발생했습니다: " + e.getMessage();
+            log.error("Claude API 호출 오류 (pmid={})", paper.getPmid(), e);
+            return GENERIC_ERROR_MESSAGE;
         }
     }
 }
