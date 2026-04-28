@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 public class PaperController {
 
     private static final Pattern PMID_PATTERN = Pattern.compile("^[0-9]{1,10}$");
+    private static final Pattern PMCID_PATTERN = Pattern.compile("^(?:PMC)?[0-9]{1,10}$");
     private static final int MAX_QUERY_LENGTH = 500;
     private static final int MAX_ABSTRACT_LENGTH = 50_000;
     private static final int MAX_TITLE_LENGTH = 1_000;
@@ -75,16 +76,27 @@ public class PaperController {
     public Map<String, String> review(@RequestBody ReviewRequest request) {
         validateReviewRequest(request);
 
+        String fullText = "";
+        if (request.getPmcid() != null && !request.getPmcid().isBlank()) {
+            fullText = pubMedService.fetchPmcFullText(request.getPmcid());
+        }
+
         PaperDetail detail = PaperDetail.builder()
                 .pmid(request.getPmid())
+                .pmcid(request.getPmcid())
                 .title(request.getPaperTitle())
                 .abstractText(request.getAbstractText())
+                .fullText(fullText)
                 .authors(request.getAuthors())
                 .journal(request.getJournal())
                 .pubDate(request.getPubDate())
                 .build();
 
-        log.info("[REVIEW] pmid={} \"{}\" — Claude 호출 시작", request.getPmid(), truncate(detail.getTitle(), 60));
+        boolean usingFullText = fullText != null && !fullText.isBlank();
+        log.info("[REVIEW] pmid={} pmcid={} source={} \"{}\" — Claude 호출 시작",
+                request.getPmid(), request.getPmcid(),
+                usingFullText ? "fulltext(" + fullText.length() + "자)" : "abstract",
+                truncate(detail.getTitle(), 60));
         long start = System.currentTimeMillis();
         String reviewText = claudeService.reviewPaper(detail);
         long duration = System.currentTimeMillis() - start;
@@ -154,6 +166,10 @@ public class PaperController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "요청 바디가 비어있습니다.");
         }
         validatePmid(r.getPmid());
+        if (r.getPmcid() != null && !r.getPmcid().isBlank()
+                && !PMCID_PATTERN.matcher(r.getPmcid()).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "잘못된 PMCID 형식입니다.");
+        }
         if (r.getPaperTitle() == null || r.getPaperTitle().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "논문 제목이 필요합니다.");
         }

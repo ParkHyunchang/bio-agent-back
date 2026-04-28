@@ -89,9 +89,22 @@ src/main/java/com/hyunchang/bioagent/
 | Method | Path | 설명 |
 |--------|------|------|
 | GET | `/health` | 서버 상태 확인 |
-| GET | `/api/papers/search?query=...&maxResults=10` | PubMed 논문 검색 |
-| GET | `/api/papers/{pmid}` | 논문 상세 및 초록 조회 |
-| POST | `/api/papers/review` | Claude AI 논문 요약 생성 |
+| GET | `/api/papers/search?query=...&page=1&size=20` | PubMed 논문 검색 |
+| GET | `/api/papers/{pmid}` | 논문 상세 (초록 + PMC ID) 조회 |
+| POST | `/api/papers/review` | Claude AI 논문 요약 생성 (PMC ID 있으면 본문 분석) |
+
+### PubMed 검색 문법
+
+`query` 파라미터에는 PubMed E-utilities 필드 태그를 그대로 쓸 수 있습니다.
+
+| 쿼리 | 의미 |
+|---|---|
+| `BRCA2` | 모든 필드 검색 |
+| `cancer[Title]` | 제목 검색 |
+| `cancer[Title] AND pubmed pmc[sb]` | **PMC 풀텍스트 등재 논문만** 검색 — AI 리뷰 시 본문 전체 분석 |
+| `cancer[Title] AND 2024[Year]` | 제목 + 연도 조합 |
+
+`pubmed pmc[sb]` 필터로 잡힌 논문은 `GET /api/papers/{pmid}` 응답에 `pmcid` 필드가 채워지고, 리뷰 호출 시 PMC efetch로 본문 XML을 받아 텍스트 추출 후 Claude에 전달합니다 (없으면 초록으로 자동 폴백).
 
 ### 응답 예시
 
@@ -110,8 +123,24 @@ GET /api/papers/search?query=BRCA2
   }
 ]
 
+GET /api/papers/37654321
+{
+  "pmid": "37654321",
+  "pmcid": "PMC10000000",            // 오픈액세스 시 자동 채워짐, 아니면 null
+  "title": "...",
+  "authors": [...],
+  "journal": "...",
+  "pubDate": "2024 Jan",
+  "abstractText": "..."
+}
+
 POST /api/papers/review
-Body: { "pmid": "37654321" }
+Body: {
+  "pmid": "37654321",
+  "pmcid": "PMC10000000",            // 있으면 PMC 본문 분석, 없으면 초록 분석
+  "paperTitle": "...",
+  "abstractText": "..."
+}
 → { "review": "## 연구 목적\n..." }
 ```
 

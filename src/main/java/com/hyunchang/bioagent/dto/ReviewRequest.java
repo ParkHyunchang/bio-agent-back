@@ -7,6 +7,7 @@ import java.util.List;
 @Data
 public class ReviewRequest {
     private String pmid;
+    private String pmcid;
     private String queryText;
     private String paperTitle;
     private String abstractText;

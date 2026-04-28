@@ -10,10 +10,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.StringReader;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -26,6 +34,12 @@ public class PubMedService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final int TOO_BROAD_THRESHOLD = 200;
+    /** PMC 본문이 너무 길어 Claude 컨텍스트를 과다 점유하지 않도록 컷오프. */
+    private static final int MAX_FULL_TEXT_CHARS = 150_000;
+    /** JATS XML에서 단락/섹션 구분 역할을 하는 블록 요소들. */
+    private static final Set<String> BLOCK_ELEMENTS = Set.of(
+            "sec", "p", "title", "abstract", "list-item", "caption", "table-wrap"
+    );
 
     /** 429 Rate Limit 시 1초 대기 후 1회 재시도하는 GET 헬퍼 */
     private String fetchWithRetry(URI uri) throws Exception {
@@ -142,7 +156,7 @@ public class PubMedService {
     }
 
     public PaperDetail getDetail(String pmid) {
-        // 1. esummary: 메타데이터
+        // 1. esummary: 메타데이터 + PMC ID
         URI summaryUri = UriComponentsBuilder.fromUriString(BASE_URL + "/esummary.fcgi")
                 .queryParam("db", "pubmed")
                 .queryParam("id", pmid)
@@ -150,6 +164,7 @@ public class PubMedService {
                 .build().toUri();
 
         PaperSummary summary;
+        String pmcid = null;
         try {
             String summaryResponse = pubmedRestClient.get().uri(summaryUri).retrieve().body(String.class);
             JsonNode paper = objectMapper.readTree(summaryResponse).path("result").path(pmid);
@@ -157,6 +172,16 @@ public class PubMedService {
             List<String> authors = new ArrayList<>();
             for (JsonNode author : paper.path("authors")) {
                 authors.add(author.path("name").asText());
+            }
+
+            for (JsonNode aid : paper.path("articleids")) {
+                if ("pmc".equalsIgnoreCase(aid.path("idtype").asText())) {
+                    String value = aid.path("value").asText("");
+                    if (!value.isBlank()) {
+                        pmcid = value;
+                        break;
+                    }
+                }
             }
 
             summary = PaperSummary.builder()
@@ -188,11 +213,94 @@ public class PubMedService {
 
         return PaperDetail.builder()
                 .pmid(pmid)
+                .pmcid(pmcid)
                 .title(summary.getTitle())
                 .authors(summary.getAuthors())
                 .pubDate(summary.getPubDate())
                 .journal(summary.getJournal())
                 .abstractText(abstractText)
                 .build();
+    }
+
+    /**
+     * PMC(오픈액세스 PubMed Central)에서 본문 XML을 가져와 텍스트로 추출.
+     * 본문이 없거나 임베고된 경우 빈 문자열을 반환한다.
+     */
+    public String fetchPmcFullText(String pmcid) {
+        if (pmcid == null || pmcid.isBlank()) return "";
+
+        URI fullTextUri = UriComponentsBuilder.fromUriString(BASE_URL + "/efetch.fcgi")
+                .queryParam("db", "pmc")
+                .queryParam("id", pmcid)
+                .queryParam("rettype", "xml")
+                .build().toUri();
+
+        try {
+            long start = System.currentTimeMillis();
+            String xml = fetchWithRetry(fullTextUri);
+            if (xml == null || xml.isBlank()) {
+                log.warn("PMC 본문 응답이 비어 있음 pmcid={}", pmcid);
+                return "";
+            }
+            String text = extractJatsBodyText(xml);
+            if (text.length() > MAX_FULL_TEXT_CHARS) {
+                text = text.substring(0, MAX_FULL_TEXT_CHARS);
+            }
+            log.info("PMC 본문 조회 완료 pmcid={} → {}자 ({}ms)",
+                    pmcid, text.length(), System.currentTimeMillis() - start);
+            return text;
+        } catch (Exception e) {
+            log.warn("PMC 본문 조회 실패 pmcid={}: {}", pmcid, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * JATS XML에서 &lt;body&gt; 영역의 텍스트를 추출. XXE 방지를 위해 외부 엔티티를 비활성화한다.
+     */
+    private String extractJatsBodyText(String xml) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        factory.setNamespaceAware(false);
+
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        Document doc = builder.parse(new InputSource(new StringReader(xml)));
+
+        NodeList bodies = doc.getElementsByTagName("body");
+        if (bodies.getLength() == 0) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < bodies.getLength(); i++) {
+            appendBlockText(bodies.item(i), sb);
+        }
+        return sb.toString().replaceAll("\\n{3,}", "\n\n").trim();
+    }
+
+    private void appendBlockText(Node node, StringBuilder sb) {
+        short type = node.getNodeType();
+        if (type == Node.TEXT_NODE || type == Node.CDATA_SECTION_NODE) {
+            sb.append(node.getNodeValue());
+            return;
+        }
+        if (type != Node.ELEMENT_NODE) {
+            return;
+        }
+        String name = node.getNodeName();
+        if ("xref".equals(name) || "fn".equals(name) || "table".equals(name)) {
+            return;
+        }
+        NodeList children = node.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            appendBlockText(children.item(i), sb);
+        }
+        if (BLOCK_ELEMENTS.contains(name)) {
+            sb.append("\n\n");
+        }
     }
 }

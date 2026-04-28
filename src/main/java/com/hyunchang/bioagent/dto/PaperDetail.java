@@ -13,9 +13,11 @@ import java.util.List;
 @AllArgsConstructor
 public class PaperDetail {
     private String pmid;
+    private String pmcid;
     private String title;
     private List<String> authors;
     private String pubDate;
     private String journal;
     private String abstractText;
+    private String fullText;
 }

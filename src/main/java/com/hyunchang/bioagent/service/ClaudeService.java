@@ -37,6 +37,12 @@ public class ClaudeService {
                 ? String.join(", ", paper.getAuthors())
                 : "저자 정보 없음";
 
+        boolean hasFullText = paper.getFullText() != null && !paper.getFullText().isBlank();
+        String contentLabel = hasFullText ? "전체 본문 (PMC)" : "초록";
+        String contentBody = hasFullText ? paper.getFullText() : paper.getAbstractText();
+        // 한국어는 토큰 효율이 낮아 (1자 ≈ 2~3 토큰) 넉넉히 잡아야 4섹션 요약이 잘리지 않음
+        int maxTokens = hasFullText ? 8000 : 4000;
+
         String prompt = String.format("""
                 당신은 생명과학 연구 전문가입니다. 다음 논문의 내용을 분석하여 한국어로 요약해주세요.
 
@@ -44,7 +50,7 @@ public class ClaudeService {
                 저자: %s
                 저널: %s (%s)
 
-                논문 내용:
+                %s:
                 %s
 
                 다음 형식으로 정리해주세요:
@@ -65,12 +71,13 @@ public class ClaudeService {
                 authorsStr,
                 paper.getJournal(),
                 paper.getPubDate(),
-                paper.getAbstractText()
+                contentLabel,
+                contentBody
         );
 
         Map<String, Object> requestBody = Map.of(
                 "model", MODEL,
-                "max_tokens", 1500,
+                "max_tokens", maxTokens,
                 "messages", List.of(Map.of("role", "user", "content", prompt))
         );
 
@@ -85,6 +92,11 @@ public class ClaudeService {
                     .body(String.class);
 
             JsonNode root = objectMapper.readTree(response);
+            String stopReason = root.path("stop_reason").asText("");
+            if ("max_tokens".equals(stopReason)) {
+                log.warn("Claude 응답이 max_tokens({})에서 잘림 pmid={}. max_tokens 상향 필요.",
+                        maxTokens, paper.getPmid());
+            }
             return root.path("content").get(0).path("text").asText();
         } catch (Exception e) {
             log.error("Claude API 호출 오류 (pmid={})", paper.getPmid(), e);
