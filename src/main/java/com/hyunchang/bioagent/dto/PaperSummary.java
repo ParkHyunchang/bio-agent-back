@@ -16,5 +16,8 @@ public class PaperSummary {
     private String title;
     private List<String> authors;
     private String pubDate;
+    private String epubDate;
     private String journal;
+    private List<String> pubTypes;
+    private boolean hasPmc;
 }

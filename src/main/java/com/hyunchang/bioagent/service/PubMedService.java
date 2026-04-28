@@ -41,6 +41,26 @@ public class PubMedService {
             "sec", "p", "title", "abstract", "list-item", "caption", "table-wrap"
     );
 
+    /** UI 정렬값 → PubMed esearch sort 파라미터. relevance/null이면 기본(best match). */
+    private String mapSortParam(String sort) {
+        if (sort == null || sort.isBlank() || "relevance".equalsIgnoreCase(sort)) return null;
+        if ("pubDate".equalsIgnoreCase(sort)) return "pub_date";
+        if ("epubDate".equalsIgnoreCase(sort)) return "date";
+        return null;
+    }
+
+    /** 사용자 쿼리에 publication type / PMC 필터를 PubMed term 문법으로 덧붙인다. */
+    private String buildFilteredTerm(String baseQuery, String pubType, boolean onlyPmc) {
+        StringBuilder term = new StringBuilder(baseQuery);
+        if (pubType != null && !pubType.isBlank()) {
+            term.append(" AND \"").append(pubType).append("\"[Publication Type]");
+        }
+        if (onlyPmc) {
+            term.append(" AND \"pubmed pmc\"[sb]");
+        }
+        return term.toString();
+    }
+
     /** 429 Rate Limit 시 1초 대기 후 1회 재시도하는 GET 헬퍼 */
     private String fetchWithRetry(URI uri) throws Exception {
         try {
@@ -76,19 +96,35 @@ public class PubMedService {
     }
 
     public SearchResponse search(String query, int page, int size) {
+        return search(query, page, size, null, null, false);
+    }
+
+    /**
+     * @param sort     null/"relevance" → best match, "pubDate" → 정식 발행일순,
+     *                 "epubDate" → PubMed 등록순(sort=date, 온라인 공개순 근사)
+     * @param pubType  Publication Type 필터 (예: "Review", "Clinical Trial"). 빈/널이면 무시.
+     * @param onlyPmc  PMC 본문 보유 논문만(`"pubmed pmc"[sb]`).
+     */
+    public SearchResponse search(String query, int page, int size,
+                                 String sort, String pubType, boolean onlyPmc) {
         String correctedQuery = checkSpelling(query);
-        String searchQuery = correctedQuery != null ? correctedQuery : query;
+        String baseQuery = correctedQuery != null ? correctedQuery : query;
+        String searchQuery = buildFilteredTerm(baseQuery, pubType, onlyPmc);
 
         int retStart = (page - 1) * size;
 
         // 1. esearch: 총 건수 확인 및 현재 페이지 PMID 조회
-        URI searchUri = UriComponentsBuilder.fromUriString(BASE_URL + "/esearch.fcgi")
+        UriComponentsBuilder esearchBuilder = UriComponentsBuilder.fromUriString(BASE_URL + "/esearch.fcgi")
                 .queryParam("db", "pubmed")
                 .queryParam("term", searchQuery)
                 .queryParam("retstart", retStart)
                 .queryParam("retmax", size)
-                .queryParam("retmode", "json")
-                .build().toUri();
+                .queryParam("retmode", "json");
+        String sortParam = mapSortParam(sort);
+        if (sortParam != null) {
+            esearchBuilder.queryParam("sort", sortParam);
+        }
+        URI searchUri = esearchBuilder.build().toUri();
 
         List<String> pmids = new ArrayList<>();
         int totalCount = 0;
@@ -133,12 +169,30 @@ public class PubMedService {
                     authors.add(author.path("name").asText());
                 }
 
+                List<String> pubTypes = new ArrayList<>();
+                for (JsonNode t : paper.path("pubtype")) {
+                    String s = t.asText();
+                    if (s != null && !s.isBlank()) pubTypes.add(s);
+                }
+
+                boolean hasPmc = false;
+                for (JsonNode aid : paper.path("articleids")) {
+                    if ("pmc".equalsIgnoreCase(aid.path("idtype").asText())
+                            && !aid.path("value").asText("").isBlank()) {
+                        hasPmc = true;
+                        break;
+                    }
+                }
+
                 results.add(PaperSummary.builder()
                         .pmid(pmid)
                         .title(paper.path("title").asText())
                         .authors(authors)
                         .pubDate(paper.path("pubdate").asText())
+                        .epubDate(paper.path("epubdate").asText())
                         .journal(paper.path("source").asText())
+                        .pubTypes(pubTypes)
+                        .hasPmc(hasPmc)
                         .build());
             }
         } catch (Exception e) {

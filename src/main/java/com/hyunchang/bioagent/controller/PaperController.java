@@ -20,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -35,6 +36,16 @@ public class PaperController {
     private static final int MAX_ABSTRACT_LENGTH = 50_000;
     private static final int MAX_TITLE_LENGTH = 1_000;
 
+    private static final Set<String> ALLOWED_SORTS = Set.of("relevance", "pubDate", "epubDate");
+    private static final Set<String> ALLOWED_PUB_TYPES = Set.of(
+            "Review",
+            "Systematic Review",
+            "Meta-Analysis",
+            "Clinical Trial",
+            "Randomized Controlled Trial",
+            "Case Reports"
+    );
+
     private final PubMedService pubMedService;
     private final ClaudeService claudeService;
     private final SearchLogService searchLogService;
@@ -44,15 +55,21 @@ public class PaperController {
     public SearchResponse search(
             @RequestParam String query,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String pubType,
+            @RequestParam(defaultValue = "false") boolean onlyPmc) {
         validateQuery(query);
+        String safeSort = validateSort(sort);
+        String safePubType = validatePubType(pubType);
         int safePage = Math.max(1, page);
         int safeSize = Math.max(1, Math.min(size, 100));
         long start = System.currentTimeMillis();
-        SearchResponse result = pubMedService.search(query, safePage, safeSize);
+        SearchResponse result = pubMedService.search(query, safePage, safeSize, safeSort, safePubType, onlyPmc);
         long duration = System.currentTimeMillis() - start;
-        log.info("[SEARCH] query=\"{}\" page={} → {}건/총{}건 tooBroad={} ({}ms)",
-                query, safePage, result.getPapers().size(), result.getTotal(), result.isTooBroad(), duration);
+        log.info("[SEARCH] query=\"{}\" page={} sort={} pubType={} onlyPmc={} → {}건/총{}건 tooBroad={} ({}ms)",
+                query, safePage, safeSort, safePubType, onlyPmc,
+                result.getPapers().size(), result.getTotal(), result.isTooBroad(), duration);
         searchLogService.logSearch(query, result.getTotal(), duration);
         return result;
     }
@@ -153,6 +170,22 @@ public class PaperController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "검색어가 너무 깁니다 (최대 " + MAX_QUERY_LENGTH + "자).");
         }
+    }
+
+    private String validateSort(String sort) {
+        if (sort == null || sort.isBlank()) return null;
+        if (!ALLOWED_SORTS.contains(sort)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "지원하지 않는 정렬입니다.");
+        }
+        return sort;
+    }
+
+    private String validatePubType(String pubType) {
+        if (pubType == null || pubType.isBlank()) return null;
+        if (!ALLOWED_PUB_TYPES.contains(pubType)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "지원하지 않는 논문 유형입니다.");
+        }
+        return pubType;
     }
 
     private void validatePmid(String pmid) {
