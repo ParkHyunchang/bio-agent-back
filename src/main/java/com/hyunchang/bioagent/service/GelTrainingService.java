@@ -36,7 +36,7 @@ public class GelTrainingService {
     private final GelDataService gelDataService;
     private final RestClient mlRestClient;
     private final RestClient anthropicRestClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     // ── 대량 업로드 (ZIP + labels.csv) ───────────────────────────────
 

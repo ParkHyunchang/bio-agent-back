@@ -27,7 +27,7 @@ public class ConversationStore {
 
     private final AgentSessionRepository sessionRepository;
     private final AgentMessageRepository messageRepository;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     private static final TypeReference<List<Map<String, Object>>> LIST_TYPE =
             new TypeReference<>() {};

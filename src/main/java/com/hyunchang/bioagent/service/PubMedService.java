@@ -2,12 +2,18 @@ package com.hyunchang.bioagent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hyunchang.bioagent.config.AsyncConfig;
+import com.hyunchang.bioagent.config.CacheConfig;
+import com.hyunchang.bioagent.dto.AbstractSection;
 import com.hyunchang.bioagent.dto.PaperDetail;
 import com.hyunchang.bioagent.dto.PaperSummary;
 import com.hyunchang.bioagent.dto.SearchResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import org.w3c.dom.Document;
@@ -22,6 +28,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @Service
@@ -31,9 +38,13 @@ public class PubMedService {
     private static final String BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 
     private final RestClient pubmedRestClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
-    private static final int TOO_BROAD_THRESHOLD = 200;
+    /** NCBI API key. 등록 시 분당 3 → 10 req로 상향. 미설정 시 익명 호출. */
+    @Value("${pubmed.api.key:}")
+    private String apiKey;
+
+    private static final int TOO_BROAD_THRESHOLD = 5_000;
     /** PMC 본문이 너무 길어 Claude 컨텍스트를 과다 점유하지 않도록 컷오프. */
     private static final int MAX_FULL_TEXT_CHARS = 150_000;
     /** JATS XML에서 단락/섹션 구분 역할을 하는 블록 요소들. */
@@ -41,16 +52,32 @@ public class PubMedService {
             "sec", "p", "title", "abstract", "list-item", "caption", "table-wrap"
     );
 
+    /** PMC 본문 추출 결과. truncated가 true면 MAX_FULL_TEXT_CHARS에서 잘렸음을 의미. */
+    public record PmcFullText(String text, boolean truncated) {
+        public static PmcFullText empty() { return new PmcFullText("", false); }
+    }
+
+    /** 모든 eutils URL에 api_key를 일관되게 부착. 미설정 시 그대로 둔다. */
+    private UriComponentsBuilder withApiKey(UriComponentsBuilder b) {
+        if (apiKey != null && !apiKey.isBlank()) {
+            b.queryParam("api_key", apiKey);
+        }
+        return b;
+    }
+
     /** UI 정렬값 → PubMed esearch sort 파라미터. relevance/null이면 기본(best match). */
-    private String mapSortParam(String sort) {
+    // visible-for-testing
+    String mapSortParam(String sort) {
         if (sort == null || sort.isBlank() || "relevance".equalsIgnoreCase(sort)) return null;
         if ("pubDate".equalsIgnoreCase(sort)) return "pub_date";
         if ("epubDate".equalsIgnoreCase(sort)) return "date";
         return null;
     }
 
-    /** 사용자 쿼리에 publication type / PMC 필터를 PubMed term 문법으로 덧붙인다. */
-    private String buildFilteredTerm(String baseQuery, String pubType, boolean onlyPmc) {
+    /** 사용자 쿼리에 publication type / PMC / 발행연도 필터를 PubMed term 문법으로 덧붙인다. */
+    // visible-for-testing
+    String buildFilteredTerm(String baseQuery, String pubType, boolean onlyPmc,
+                                     Integer yearFrom, Integer yearTo) {
         StringBuilder term = new StringBuilder(baseQuery);
         if (pubType != null && !pubType.isBlank()) {
             term.append(" AND \"").append(pubType).append("\"[Publication Type]");
@@ -58,29 +85,41 @@ public class PubMedService {
         if (onlyPmc) {
             term.append(" AND \"pubmed pmc\"[sb]");
         }
+        if (yearFrom != null || yearTo != null) {
+            int from = yearFrom != null ? yearFrom : 1900;
+            int to = yearTo != null ? yearTo : 3000;
+            term.append(" AND (\"").append(from).append("\"[dp] : \"").append(to).append("\"[dp])");
+        }
         return term.toString();
     }
 
-    /** 429 Rate Limit 시 1초 대기 후 1회 재시도하는 GET 헬퍼 */
+    /**
+     * 429 Rate Limit 처리 GET 헬퍼.
+     * - API key 미설정(분당 3 req): sleep 후 1회 재시도. NCBI 익명 한도가 매우 낮아 재시도가 의미 있음.
+     * - API key 설정됨(분당 10 req+): 재시도 없이 즉시 예외 전파. 캐싱과 키로 429가 매우 드물고,
+     *   재시도하느라 워커 스레드를 점유하기보다 빠르게 실패시키는 편이 자원 효율적.
+     */
     private String fetchWithRetry(URI uri) throws Exception {
         try {
             return pubmedRestClient.get().uri(uri).retrieve().body(String.class);
-        } catch (Exception e) {
-            if (e.getMessage() != null && e.getMessage().contains("429")) {
-                log.warn("PubMed rate limit 감지, 1.1초 대기 후 재시도");
-                Thread.sleep(1100);
-                return pubmedRestClient.get().uri(uri).retrieve().body(String.class);
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            boolean hasKey = apiKey != null && !apiKey.isBlank();
+            if (hasKey) {
+                log.warn("PubMed rate limit(429) — API key 사용 중인데 한도 초과. 재시도 생략.");
+                throw e;
             }
-            throw e;
+            log.warn("PubMed rate limit(429) — 익명 호출, 600ms 대기 후 1회 재시도");
+            Thread.sleep(600);
+            return pubmedRestClient.get().uri(uri).retrieve().body(String.class);
         }
     }
 
     /** espell API로 PubMed 철자 교정어 반환. 교정 불필요시 null */
     private String checkSpelling(String query) {
-        URI spellUri = UriComponentsBuilder.fromUriString(BASE_URL + "/espell.fcgi")
+        URI spellUri = withApiKey(UriComponentsBuilder.fromUriString(BASE_URL + "/espell.fcgi")
                 .queryParam("db", "pubmed")
                 .queryParam("term", query)
-                .queryParam("retmode", "json")
+                .queryParam("retmode", "json"))
                 .build().toUri();
         try {
             String response = pubmedRestClient.get().uri(spellUri).retrieve().body(String.class);
@@ -96,7 +135,12 @@ public class PubMedService {
     }
 
     public SearchResponse search(String query, int page, int size) {
-        return search(query, page, size, null, null, false);
+        return search(query, page, size, null, null, false, null, null);
+    }
+
+    public SearchResponse search(String query, int page, int size,
+                                 String sort, String pubType, boolean onlyPmc) {
+        return search(query, page, size, sort, pubType, onlyPmc, null, null);
     }
 
     /**
@@ -104,12 +148,17 @@ public class PubMedService {
      *                 "epubDate" → PubMed 등록순(sort=date, 온라인 공개순 근사)
      * @param pubType  Publication Type 필터 (예: "Review", "Clinical Trial"). 빈/널이면 무시.
      * @param onlyPmc  PMC 본문 보유 논문만(`"pubmed pmc"[sb]`).
+     * @param yearFrom/yearTo 발행연도 범위(YYYY). 한 쪽만 지정해도 됨.
      */
+    @Cacheable(value = CacheConfig.SEARCH_CACHE,
+            key = "T(java.util.Objects).hash(#query, #page, #size, #sort, #pubType, #onlyPmc, #yearFrom, #yearTo)",
+            unless = "#result == null || #result.papers.isEmpty()")
     public SearchResponse search(String query, int page, int size,
-                                 String sort, String pubType, boolean onlyPmc) {
+                                 String sort, String pubType, boolean onlyPmc,
+                                 Integer yearFrom, Integer yearTo) {
         String correctedQuery = checkSpelling(query);
         String baseQuery = correctedQuery != null ? correctedQuery : query;
-        String searchQuery = buildFilteredTerm(baseQuery, pubType, onlyPmc);
+        String searchQuery = buildFilteredTerm(baseQuery, pubType, onlyPmc, yearFrom, yearTo);
 
         int retStart = (page - 1) * size;
 
@@ -124,7 +173,7 @@ public class PubMedService {
         if (sortParam != null) {
             esearchBuilder.queryParam("sort", sortParam);
         }
-        URI searchUri = esearchBuilder.build().toUri();
+        URI searchUri = withApiKey(esearchBuilder).build().toUri();
 
         List<String> pmids = new ArrayList<>();
         int totalCount = 0;
@@ -149,10 +198,10 @@ public class PubMedService {
         }
 
         // 2. esummary: 제목/저자/저널 조회
-        URI summaryUri = UriComponentsBuilder.fromUriString(BASE_URL + "/esummary.fcgi")
+        URI summaryUri = withApiKey(UriComponentsBuilder.fromUriString(BASE_URL + "/esummary.fcgi")
                 .queryParam("db", "pubmed")
                 .queryParam("id", String.join(",", pmids))
-                .queryParam("retmode", "json")
+                .queryParam("retmode", "json"))
                 .build().toUri();
 
         List<PaperSummary> results = new ArrayList<>();
@@ -209,18 +258,38 @@ public class PubMedService {
                 .build();
     }
 
+    @Cacheable(value = CacheConfig.DETAIL_CACHE, key = "#pmid", unless = "#result == null")
     public PaperDetail getDetail(String pmid) {
-        // 1. esummary: 메타데이터 + PMC ID
-        URI summaryUri = UriComponentsBuilder.fromUriString(BASE_URL + "/esummary.fcgi")
+        // esummary와 efetch를 병렬 호출하여 응답 시간을 max(t1,t2)로 단축.
+        URI summaryUri = withApiKey(UriComponentsBuilder.fromUriString(BASE_URL + "/esummary.fcgi")
                 .queryParam("db", "pubmed")
                 .queryParam("id", pmid)
-                .queryParam("retmode", "json")
+                .queryParam("retmode", "json"))
                 .build().toUri();
+
+        URI abstractUri = withApiKey(UriComponentsBuilder.fromUriString(BASE_URL + "/efetch.fcgi")
+                .queryParam("db", "pubmed")
+                .queryParam("id", pmid)
+                .queryParam("retmode", "xml")
+                .queryParam("rettype", "abstract"))
+                .build().toUri();
+
+        CompletableFuture<String> summaryFut = CompletableFuture.supplyAsync(AsyncConfig.withMdc(() -> {
+            try { return pubmedRestClient.get().uri(summaryUri).retrieve().body(String.class); }
+            catch (Exception e) { log.error("PubMed esummary 오류 pmid={}", pmid, e); return null; }
+        }));
+        CompletableFuture<String> abstractFut = CompletableFuture.supplyAsync(AsyncConfig.withMdc(() -> {
+            try { return pubmedRestClient.get().uri(abstractUri).retrieve().body(String.class); }
+            catch (Exception e) { log.warn("PubMed efetch(abstract) 오류 pmid={}: {}", pmid, e.getMessage()); return null; }
+        }));
+
+        // esummary 파싱 (필수)
+        String summaryResponse = summaryFut.join();
+        if (summaryResponse == null) return null;
 
         PaperSummary summary;
         String pmcid = null;
         try {
-            String summaryResponse = pubmedRestClient.get().uri(summaryUri).retrieve().body(String.class);
             JsonNode paper = objectMapper.readTree(summaryResponse).path("result").path(pmid);
 
             List<String> authors = new ArrayList<>();
@@ -231,10 +300,7 @@ public class PubMedService {
             for (JsonNode aid : paper.path("articleids")) {
                 if ("pmc".equalsIgnoreCase(aid.path("idtype").asText())) {
                     String value = aid.path("value").asText("");
-                    if (!value.isBlank()) {
-                        pmcid = value;
-                        break;
-                    }
+                    if (!value.isBlank()) { pmcid = value; break; }
                 }
             }
 
@@ -246,24 +312,14 @@ public class PubMedService {
                     .journal(paper.path("source").asText())
                     .build();
         } catch (Exception e) {
-            log.error("PubMed detail 메타데이터 조회 오류 pmid={}", pmid, e);
+            log.error("PubMed detail 메타데이터 파싱 오류 pmid={}", pmid, e);
             return null;
         }
 
-        // 2. efetch: 초록 텍스트
-        URI abstractUri = UriComponentsBuilder.fromUriString(BASE_URL + "/efetch.fcgi")
-                .queryParam("db", "pubmed")
-                .queryParam("id", pmid)
-                .queryParam("retmode", "text")
-                .queryParam("rettype", "abstract")
-                .build().toUri();
-
-        String abstractText = "";
-        try {
-            abstractText = pubmedRestClient.get().uri(abstractUri).retrieve().body(String.class);
-        } catch (Exception e) {
-            log.warn("PubMed 초록 조회 오류 pmid={}", pmid, e);
-        }
+        // efetch 파싱 (실패해도 메타데이터만으로 응답)
+        String abstractXml = abstractFut.join();
+        List<AbstractSection> sections = parseAbstractSections(abstractXml);
+        String abstractText = renderAbstractText(sections);
 
         return PaperDetail.builder()
                 .pmid(pmid)
@@ -273,46 +329,61 @@ public class PubMedService {
                 .pubDate(summary.getPubDate())
                 .journal(summary.getJournal())
                 .abstractText(abstractText)
+                .abstractSections(sections.isEmpty() ? null : sections)
                 .build();
     }
 
     /**
-     * PMC(오픈액세스 PubMed Central)에서 본문 XML을 가져와 텍스트로 추출.
-     * 본문이 없거나 임베고된 경우 빈 문자열을 반환한다.
+     * efetch?retmode=xml 응답에서 &lt;AbstractText Label="..."&gt; 섹션을 추출.
+     * 라벨이 없는 단일 초록은 label=null인 한 항목으로 반환. 파싱 실패 시 빈 리스트.
      */
-    public String fetchPmcFullText(String pmcid) {
-        if (pmcid == null || pmcid.isBlank()) return "";
-
-        URI fullTextUri = UriComponentsBuilder.fromUriString(BASE_URL + "/efetch.fcgi")
-                .queryParam("db", "pmc")
-                .queryParam("id", pmcid)
-                .queryParam("rettype", "xml")
-                .build().toUri();
-
+    // visible-for-testing
+    List<AbstractSection> parseAbstractSections(String xml) {
+        List<AbstractSection> out = new ArrayList<>();
+        if (xml == null || xml.isBlank()) return out;
         try {
-            long start = System.currentTimeMillis();
-            String xml = fetchWithRetry(fullTextUri);
-            if (xml == null || xml.isBlank()) {
-                log.warn("PMC 본문 응답이 비어 있음 pmcid={}", pmcid);
-                return "";
+            DocumentBuilderFactory factory = secureDocumentBuilderFactory();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(new InputSource(new StringReader(xml)));
+            NodeList nodes = doc.getElementsByTagName("AbstractText");
+            for (int i = 0; i < nodes.getLength(); i++) {
+                Node n = nodes.item(i);
+                String label = null;
+                if (n.getAttributes() != null) {
+                    Node attr = n.getAttributes().getNamedItem("Label");
+                    if (attr != null) {
+                        String v = attr.getNodeValue();
+                        if (v != null && !v.isBlank()) label = v.trim();
+                    }
+                }
+                String text = n.getTextContent();
+                if (text != null) text = text.replaceAll("\\s+", " ").trim();
+                if (text == null || text.isEmpty()) continue;
+                out.add(AbstractSection.builder().label(label).text(text).build());
             }
-            String text = extractJatsBodyText(xml);
-            if (text.length() > MAX_FULL_TEXT_CHARS) {
-                text = text.substring(0, MAX_FULL_TEXT_CHARS);
-            }
-            log.info("PMC 본문 조회 완료 pmcid={} → {}자 ({}ms)",
-                    pmcid, text.length(), System.currentTimeMillis() - start);
-            return text;
         } catch (Exception e) {
-            log.warn("PMC 본문 조회 실패 pmcid={}: {}", pmcid, e.getMessage());
-            return "";
+            log.warn("PubMed 초록 XML 파싱 실패: {}", e.getMessage());
         }
+        return out;
     }
 
-    /**
-     * JATS XML에서 &lt;body&gt; 영역의 텍스트를 추출. XXE 방지를 위해 외부 엔티티를 비활성화한다.
-     */
-    private String extractJatsBodyText(String xml) throws Exception {
+    /** 섹션 리스트를 사람이 읽기 좋은 평문 형태로 직렬화 (라벨이 있으면 헤더로 표시). */
+    private String renderAbstractText(List<AbstractSection> sections) {
+        if (sections == null || sections.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (AbstractSection s : sections) {
+            if (s.getLabel() != null) {
+                if (sb.length() > 0) sb.append("\n\n");
+                sb.append(s.getLabel()).append(": ").append(s.getText());
+            } else {
+                if (sb.length() > 0) sb.append("\n\n");
+                sb.append(s.getText());
+            }
+        }
+        return sb.toString();
+    }
+
+    private DocumentBuilderFactory secureDocumentBuilderFactory() throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
         factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
@@ -320,8 +391,54 @@ public class PubMedService {
         factory.setXIncludeAware(false);
         factory.setExpandEntityReferences(false);
         factory.setNamespaceAware(false);
+        return factory;
+    }
 
-        DocumentBuilder builder = factory.newDocumentBuilder();
+    /**
+     * PMC(오픈액세스 PubMed Central)에서 본문 XML을 가져와 텍스트로 추출.
+     * 본문이 없거나 임베고된 경우 빈 결과를 반환한다.
+     * MAX_FULL_TEXT_CHARS에서 컷오프된 경우 truncated=true로 표시되어 호출자가 사용자에게 알림 가능.
+     * 같은 PMC ID를 짧은 시간 내 반복 요청하지 않도록 Caffeine 캐시(별도 cache, TTL 30분, 50 entries)로 보호.
+     */
+    @Cacheable(value = CacheConfig.PMC_FULLTEXT_CACHE, key = "#pmcid",
+            unless = "#result == null || #result.text == null || #result.text.isEmpty()")
+    public PmcFullText fetchPmcFullText(String pmcid) {
+        if (pmcid == null || pmcid.isBlank()) return PmcFullText.empty();
+
+        URI fullTextUri = withApiKey(UriComponentsBuilder.fromUriString(BASE_URL + "/efetch.fcgi")
+                .queryParam("db", "pmc")
+                .queryParam("id", pmcid)
+                .queryParam("rettype", "xml"))
+                .build().toUri();
+
+        try {
+            long start = System.currentTimeMillis();
+            String xml = fetchWithRetry(fullTextUri);
+            if (xml == null || xml.isBlank()) {
+                log.warn("PMC 본문 응답이 비어 있음 pmcid={}", pmcid);
+                return PmcFullText.empty();
+            }
+            String text = extractJatsBodyText(xml);
+            boolean truncated = false;
+            if (text.length() > MAX_FULL_TEXT_CHARS) {
+                text = text.substring(0, MAX_FULL_TEXT_CHARS);
+                truncated = true;
+            }
+            log.info("PMC 본문 조회 완료 pmcid={} → {}자{} ({}ms)",
+                    pmcid, text.length(), truncated ? " [truncated]" : "",
+                    System.currentTimeMillis() - start);
+            return new PmcFullText(text, truncated);
+        } catch (Exception e) {
+            log.warn("PMC 본문 조회 실패 pmcid={}: {}", pmcid, e.getMessage());
+            return PmcFullText.empty();
+        }
+    }
+
+    /**
+     * JATS XML에서 &lt;body&gt; 영역의 텍스트를 추출. XXE 방지를 위해 외부 엔티티를 비활성화한다.
+     */
+    private String extractJatsBodyText(String xml) throws Exception {
+        DocumentBuilder builder = secureDocumentBuilderFactory().newDocumentBuilder();
         Document doc = builder.parse(new InputSource(new StringReader(xml)));
 
         NodeList bodies = doc.getElementsByTagName("body");
@@ -346,7 +463,27 @@ public class PubMedService {
             return;
         }
         String name = node.getNodeName();
-        if ("xref".equals(name) || "fn".equals(name) || "table".equals(name)) {
+        if ("xref".equals(name) || "fn".equals(name)) {
+            return;
+        }
+        // 일부 PMC XML은 <body> 안에 <abstract>를 포함해 초록이 두 번 들어갈 수 있다.
+        // efetch 초록 호출에서 별도로 받으므로 본문 추출에서는 제외.
+        if ("abstract".equals(name)) {
+            return;
+        }
+        if ("table".equals(name) || "table-wrap".equals(name)) {
+            // 표 본문은 노이즈가 크므로 제외하되 <caption>(또는 <label>)은 분석에 의미가 있어 보존.
+            NodeList children = node.getChildNodes();
+            for (int i = 0; i < children.getLength(); i++) {
+                Node child = children.item(i);
+                if (child.getNodeType() == Node.ELEMENT_NODE) {
+                    String cn = child.getNodeName();
+                    if ("caption".equals(cn) || "label".equals(cn)) {
+                        appendBlockText(child, sb);
+                    }
+                }
+            }
+            if (BLOCK_ELEMENTS.contains(name)) sb.append("\n\n");
             return;
         }
         NodeList children = node.getChildNodes();

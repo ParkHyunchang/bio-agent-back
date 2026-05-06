@@ -25,7 +25,7 @@ public class GelController {
 
     private final GelDataService gelDataService;
     private final GelTrainingService gelTrainingService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     /** 단일 이미지 학습 데이터 등록 (하위 호환) */
     @PostMapping("/upload")

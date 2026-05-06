@@ -22,7 +22,7 @@ public class AgentToolHandler {
     private final GelDataService gelDataService;
     private final InterpretationService interpretationService;
     private final PubMedService pubMedService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     private static final Map<String, String> TOOL_LABELS = Map.of(
             "analyze_gel_image",       "젤 이미지 분석 중...",

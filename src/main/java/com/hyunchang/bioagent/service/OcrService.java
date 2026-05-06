@@ -48,7 +48,7 @@ public class OcrService {
 
     private final ExamRecordRepository examRecordRepository;
     private final RestClient anthropicRestClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     // 병렬 처리용 스레드 풀
     // Claude API 레이트 리밋(50 RPM) 여유 있게 유지하기 위해 5개로 제한

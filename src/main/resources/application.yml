@@ -14,3 +14,8 @@ server:
 anthropic:
   api:
     key: ${ANTHROPIC_API_KEY:}
+
+pubmed:
+  api:
+    # NCBI E-utilities API key. 등록 시 분당 3 → 10 req로 상향. 비워두면 익명 호출.
+    key: ${NCBI_API_KEY:}

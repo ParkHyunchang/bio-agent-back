@@ -79,7 +79,7 @@ public class AgentService {
     private final AgentToolHandler agentToolHandler;
     private final ConversationStore conversationStore;
     private final RestClient anthropicRestClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     // ── 공개 메서드 ────────────────────────────────────────────────
 

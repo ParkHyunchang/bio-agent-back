@@ -44,7 +44,7 @@ public class AgentController {
     private static final String GENERIC_ERROR_MESSAGE = "에이전트 처리 중 오류가 발생했습니다.";
 
     private final AgentService agentService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     @Value("${app.upload.max-image-bytes:10485760}")
     private long maxImageBytes;

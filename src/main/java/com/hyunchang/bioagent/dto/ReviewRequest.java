@@ -14,4 +14,8 @@ public class ReviewRequest {
     private List<String> authors;
     private String journal;
     private String pubDate;
+    /** "short" | "normal" | "detailed". 빈/널이면 normal. */
+    private String length;
+    /** "default" | "clinical" | "mechanism" | "statistics". 빈/널이면 default. */
+    private String perspective;
 }
