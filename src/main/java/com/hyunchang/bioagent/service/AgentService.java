@@ -20,6 +20,7 @@ public class AgentService {
     private static final String ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
     private static final String MODEL = "claude-sonnet-4-6";
     private static final int MAX_ITERATIONS = 5;
+    private static final int MAX_TOKENS = 8192;
 
     private static final String SYSTEM_PROMPT = """
             당신은 mecA PCR 젤 전기영동 분석 전문 AI 에이전트입니다.
@@ -122,14 +123,22 @@ public class AgentService {
                 List<Map<String, Object>> toolResults = agentToolHandler.executeTools(
                         response.path("content"), imageBytes, filename, progressCallback);
                 messages.add(Map.of("role", "user", "content", toolResults));
-            } else {
-                log.warn("에이전트 예상치 못한 stop_reason={}, 루프 종료", stopReason);
-                break;
+                continue;
             }
+
+            if ("max_tokens".equals(stopReason)) {
+                String partialText = extractText(response);
+                log.warn("에이전트 응답 토큰 한도 도달: sessionId={}, 부분 응답={}자", sessionId, partialText.length());
+                String notice = "⚠️ 응답이 최대 토큰 한도(" + MAX_TOKENS + ")에 도달하여 잘렸습니다. 더 짧고 구체적인 질문으로 다시 시도해주세요.";
+                return partialText.isBlank() ? notice : partialText + "\n\n---\n" + notice;
+            }
+
+            log.warn("에이전트 예상치 못한 stop_reason={}, 루프 종료", stopReason);
+            return "⚠️ 에이전트 응답 처리 중 오류가 발생했습니다. (stop_reason=" + stopReason + ")";
         }
 
         log.warn("에이전트 최대 반복 횟수 초과: sessionId={}, maxIterations={}", sessionId, MAX_ITERATIONS);
-        return "에이전트 응답 처리 중 오류가 발생했습니다.";
+        return "⚠️ 에이전트가 최대 반복 횟수(" + MAX_ITERATIONS + "회)를 초과했습니다. 더 구체적인 질문으로 다시 시도해주세요.";
     }
 
     public void clearHistory(String sessionId) {
@@ -163,7 +172,7 @@ public class AgentService {
     private JsonNode callClaude(List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
         Map<String, Object> requestBody = new LinkedHashMap<>();
         requestBody.put("model", MODEL);
-        requestBody.put("max_tokens", 2000);
+        requestBody.put("max_tokens", MAX_TOKENS);
         requestBody.put("system", SYSTEM_PROMPT);
         requestBody.put("tools", tools);
         requestBody.put("messages", messages);
