@@ -15,16 +15,13 @@ import java.util.stream.Collectors;
 public class WebConfig {
 
     /**
-     * 배포 환경의 오리진(로컬 개발·서버 IP·Synology NAS 도메인)을 모두 포괄.
+     * 운영 환경은 HTTPS(Synology 역방향 프록시 경유)만 허용.
+     * 로컬 개발만 http://localhost 예외.
      * 운영에서 더 좁히려면 env CORS_ALLOWED_ORIGINS 로 명시적 리스트 지정.
      */
     private static final String DEFAULT_ORIGIN_PATTERNS = String.join(",",
             "http://localhost:*",
             "http://127.0.0.1:*",
-            "http://125.141.20.218",
-            "http://125.141.20.218:*",
-            "http://*.synology.me",
-            "http://*.synology.me:*",
             "https://*.synology.me",
             "https://*.synology.me:*"
     );

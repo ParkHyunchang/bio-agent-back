@@ -28,8 +28,9 @@ services:
     image: ${ML_IMAGE:-ghcr.io/parkhyunchang/bio-agent-ml:latest}
     container_name: bio_agent_ml
     restart: always
-    ports:
-      - "3212:3212"
+    # 외부 노출 안 함: backend 가 같은 compose 네트워크에서 http://bio-agent-ml:3212 로 호출
+    expose:
+      - "3212"
     environment:
       PYTHONUNBUFFERED: "1"
       LOG_TO_FILE: "true"
