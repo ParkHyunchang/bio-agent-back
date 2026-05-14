@@ -71,7 +71,7 @@ java -jar target/bio-agent-api-0.0.1-SNAPSHOT.jar
 src/main/java/com/hyunchang/bioagent/
 ├── BioAgentApplication.java       # 애플리케이션 진입점
 ├── config/
-│   └── WebConfig.java             # CORS 설정
+│   └── WebConfig.java             # CORS 설정 (HTTPS only, localhost 예외)
 ├── controller/
 │   ├── HealthController.java      # 헬스체크 엔드포인트
 │   └── PaperController.java       # 논문 리뷰 API
@@ -165,3 +165,9 @@ docker compose up -d
 ```
 
 `.env` 파일이 `docker-compose.yml`과 같은 디렉토리에 있어야 합니다.
+
+### 네트워크 / 보안
+
+- **운영은 HTTPS만 허용** — `WebConfig`의 기본 CORS 허용 오리진은 `http://localhost:*`(개발용)와 `https://*.synology.me[:*]`(운영용)뿐입니다. 외부 IP나 평문 http 오리진은 제거되었습니다. 다른 오리진을 허용하려면 `CORS_ALLOWED_ORIGINS` 환경변수로 명시적으로 지정하세요.
+- **ML 컨테이너는 외부 노출 안 함** — `bio-agent-ml`(3212)는 `ports`가 아닌 `expose`로만 열려 있어 호스트에서 직접 접근할 수 없습니다. 백엔드 컨테이너가 같은 compose 네트워크에서 `http://bio-agent-ml:3212`로 호출합니다.
+- 클라이언트(`bio-agent` 프론트)는 Synology 역방향 프록시 `https://hyunchang.synology.me:3213` 으로 접속하고, 프록시가 내부 백엔드 `3211`로 전달합니다.
