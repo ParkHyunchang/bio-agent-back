@@ -15,6 +15,7 @@ public class GelLanePredictionDto {
     private Double bandHeight;
     private Boolean isSaturated;
     private Boolean isNegative;
+    private Boolean isFaint;
     private Boolean isPrimerDimer;
     private Double modelR2;
     private Double modelRmse;

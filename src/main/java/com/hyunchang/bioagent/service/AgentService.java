@@ -47,6 +47,7 @@ public class AgentService {
             - lanes 배열에서 label="M" 및 label="NTC"의 predicted_ct는 무의미하므로 해석에서 제외
             - NTC 레인의 is_negative=false이면 "오염 의심" 경고를 반드시 언급
             - is_saturated=true인 레인은 "포화 (Ct 과소평가 가능)"으로 표기
+            - is_faint=true인 레인은 "희미 (신호 미약, Ct 과대평가 가능)"으로 표기
             - 저농도 레인(10^1, 10^2, 10^3)에서 is_negative=false이면 반드시 강조 (검출 한계 이하 검출)
             - LOD(검출 한계) = 밴드 검출된 레인(is_negative=false) 중 최저 농도 레인의 레이블로 정의
 

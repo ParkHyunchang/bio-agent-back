@@ -89,6 +89,7 @@ public class GelDataService {
         dto.setBandHeight(r.getBandHeight());
         dto.setIsSaturated(r.getIsSaturated());
         dto.setIsNegative(r.getIsNegative());
+        dto.setIsFaint(r.getIsFaint());
         dto.setWarning(r.getWarning());
         dto.setCreatedAt(r.getCreatedAt());
         return dto;

@@ -76,6 +76,11 @@ public class GelRecord {
     @Builder.Default
     private Boolean isNegative = false;
 
+    /** 희미한 밴드 여부 (검출은 됐지만 상대 강도가 10% 미만) */
+    @Column(name = "is_faint", columnDefinition = "TINYINT(1) DEFAULT 0")
+    @Builder.Default
+    private Boolean isFaint = false;
+
     /** Python 서비스가 반환한 경고 메시지 (밴드 검출 이슈 등) */
     @Column(name = "warning", length = 500)
     private String warning;

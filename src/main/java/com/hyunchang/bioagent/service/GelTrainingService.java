@@ -236,6 +236,7 @@ public class GelTrainingService {
                     .bandHeight(lane.path("band_height").asDouble(0))
                     .isSaturated(lane.path("is_saturated").asBoolean(false))
                     .isNegative(lane.path("is_negative").asBoolean(false))
+                    .isFaint(lane.path("is_faint").asBoolean(false))
                     .warning(gelWarning)
                     .build();
             saved.add(gelDataService.save(record));
@@ -518,6 +519,7 @@ public class GelTrainingService {
             dto.setBandHeight(lane.path("band_height").asDouble());
             dto.setIsSaturated(lane.path("is_saturated").asBoolean(false));
             dto.setIsNegative(lane.path("is_negative").asBoolean(false));
+            dto.setIsFaint(lane.path("is_faint").asBoolean(false));
             dto.setIsPrimerDimer(lane.path("is_primer_dimer").asBoolean(false));
             dto.setModelR2(lane.has("model_r2") && !lane.path("model_r2").isNull()
                     ? lane.path("model_r2").asDouble() : null);

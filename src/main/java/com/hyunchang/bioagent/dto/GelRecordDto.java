@@ -20,6 +20,7 @@ public class GelRecordDto {
     private Double bandHeight;
     private Boolean isSaturated;
     private Boolean isNegative;
+    private Boolean isFaint;
     private String warning;
     private LocalDateTime createdAt;
 }
